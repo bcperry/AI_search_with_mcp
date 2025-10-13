@@ -11,6 +11,7 @@ The deployment creates the following resources in a single resource group:
 - User-assigned managed identity used by deployment scripts.
 - Azure AI Foundry (Azure OpenAI) account with a GPT-4o deployment.
  - Azure AI Foundry (Azure OpenAI) account with GPT-4o and Ada embeddings deployments.
+- Role assignment that grants the Azure AI Search service identity contributor access to the OpenAI resource for Entra ID inference.
 - Role assignments that allow the search service to read blobs and the deployment script to manage the search service.
 
 ## Deployment
@@ -60,3 +61,7 @@ After deployment, `azd` surfaces the following outputs for integration:
 - `STORAGE_ACCOUNT_BLOB_ENDPOINT`
 
 Use these values in application configuration or automation steps that consume the AI Search and GPT-4o capabilities.
+
+## Role assignments
+
+The templates automatically grant the Azure AI Search service's system-assigned managed identity the **Cognitive Services OpenAI Contributor** role over the Azure OpenAI account. This permission is required for Entra ID-based access from Azure AI Search to both the GPT-4o and embeddings deployments. If additional workloads need access, assign the appropriate Azure OpenAI role (for example, **Cognitive Services OpenAI User**) to their managed identities at the OpenAI account scope.

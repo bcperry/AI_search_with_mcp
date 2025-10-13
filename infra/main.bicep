@@ -100,6 +100,9 @@ var openAiSubdomainWithSuffix = '${openAiSubdomainBaseClean}aoai'
 var openAiCustomSubDomainName = length(openAiSubdomainWithSuffix) > 30 ? substring(openAiSubdomainWithSuffix, 0, 30) : openAiSubdomainWithSuffix
 var openAiDeploymentName = openAiModelName
 var openAiEmbeddingsDeploymentName = openAiEmbeddingsModelName
+var openAiRoleAssignmentModuleName = '${normalizedEnvironmentName}-aoai-role'
+var openAiContributorRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a001fd3d-188f-4b5d-821b-7da978bf7442')
+var openAiContributorRoleAssignmentName = guid(subscription().id, finalResourceGroupName, openAiAccountName, searchServiceName, 'openai-contributor')
 
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   name: finalResourceGroupName
@@ -165,6 +168,17 @@ module openAi './azureOpenAi.bicep' = {
     embeddingsModelName: openAiEmbeddingsModelName
     embeddingsModelVersion: openAiEmbeddingsModelVersion
     embeddingsCapacity: openAiEmbeddingsDeploymentCapacity
+  }
+}
+
+module openAiAccess './openAiRoleAssignment.bicep' = {
+  name: openAiRoleAssignmentModuleName
+  scope: rg
+  params: {
+    roleAssignmentName: openAiContributorRoleAssignmentName
+    openAiAccountName: openAiAccountName
+    principalId: searchService.outputs.searchServicePrincipalId
+    roleDefinitionId: openAiContributorRoleDefinitionId
   }
 }
 
