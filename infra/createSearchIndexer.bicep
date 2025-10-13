@@ -6,14 +6,17 @@ param location string
 @description('Name of the Azure AI Search service.')
 param searchServiceName string
 
-@description('Data source name to upsert.')
+@description('Name of the indexer to upsert.')
+param indexerName string
+
+@description('Name of the data source that feeds the indexer.')
 param dataSourceName string
 
-@description('Blob container name backing the data source.')
-param containerName string
+@description('Name of the skillset executed by the indexer.')
+param skillsetName string
 
-@description('Storage account resource ID referenced by the data source connection string.')
-param storageAccountResourceId string
+@description('Name of the target index populated by the indexer.')
+param targetIndexName string
 
 @description('Fully qualified endpoint for the search service (e.g. https://foo.search.windows.net).')
 param searchServiceEndpoint string
@@ -36,12 +39,21 @@ param subscriptionId string
 @description('Azure tenant ID for authentication context.')
 param tenantId string
 
-@description('Optional additional data source name to upsert for compatibility with indexers.')
-param additionalDataSourceName string = 'index-and-vectorize-datasource'
+@description('Parsing mode configuration for the indexer.')
+param parsingMode string = 'default'
 
-var scriptName = '${uniqueString(resourceGroup().id, searchServiceName, dataSourceName)}-createds'
+@description('Name of the source field used for title mapping.')
+param titleSourceFieldName string = 'metadata_storage_name'
 
-resource createDataSource 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
+@description('Name of the target title field in the index.')
+param titleTargetFieldName string = 'title'
+
+@description('Value used to force redeployment of the script when changed.')
+param forceUpdateTag string
+
+var scriptName = '${uniqueString(resourceGroup().id, searchServiceName, indexerName)}-createindexer'
+
+resource createIndexer 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
   name: scriptName
   location: location
   kind: 'AzureCLI'
@@ -56,6 +68,7 @@ resource createDataSource 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
     timeout: 'PT15M'
     retentionInterval: 'P1D'
     cleanupPreference: 'OnSuccess'
+    forceUpdateTag: forceUpdateTag
     environmentVariables: [
       {
         name: 'RESOURCE_GROUP_NAME'
@@ -70,16 +83,32 @@ resource createDataSource 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         value: searchServiceEndpoint
       }
       {
+        name: 'INDEXER_NAME'
+        value: indexerName
+      }
+      {
         name: 'DATA_SOURCE_NAME'
         value: dataSourceName
       }
       {
-        name: 'STORAGE_ACCOUNT_RESOURCE_ID'
-        value: storageAccountResourceId
+        name: 'SKILLSET_NAME'
+        value: skillsetName
       }
       {
-        name: 'CONTAINER_NAME'
-        value: containerName
+        name: 'TARGET_INDEX_NAME'
+        value: targetIndexName
+      }
+      {
+        name: 'PARSING_MODE'
+        value: parsingMode
+      }
+      {
+        name: 'TITLE_SOURCE_FIELD_NAME'
+        value: titleSourceFieldName
+      }
+      {
+        name: 'TITLE_TARGET_FIELD_NAME'
+        value: titleTargetFieldName
       }
       {
         name: 'USER_ASSIGNED_IDENTITY_CLIENT_ID'
@@ -97,10 +126,6 @@ resource createDataSource 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         name: 'AZURE_TENANT_ID'
         value: tenantId
       }
-      {
-        name: 'ADDITIONAL_DATA_SOURCE_NAME'
-        value: additionalDataSourceName
-      }
     ]
     scriptContent: '''#!/bin/bash
 set -euo pipefail
@@ -115,7 +140,7 @@ if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
   az account set --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null
 fi
 
-    API_VERSION="2020-06-30"
+API_VERSION="2024-09-01-preview"
 ADMIN_KEY=$(az search admin-key show --resource-group "$RESOURCE_GROUP_NAME" --service-name "$SEARCH_SERVICE_NAME" --query primaryKey -o tsv)
 
 if [[ -z "$ADMIN_KEY" ]]; then
@@ -123,47 +148,37 @@ if [[ -z "$ADMIN_KEY" ]]; then
   exit 1
 fi
 
-CONNECTION_STRING="ResourceId=$STORAGE_ACCOUNT_RESOURCE_ID"
 PAYLOAD_FILE=$(mktemp)
 trap 'rm -f "$PAYLOAD_FILE"' EXIT
 
-write_payload() {
-  local name="$1"
-  cat <<EOF >"$PAYLOAD_FILE"
+cat <<EOF >"$PAYLOAD_FILE"
 {
-  "name": "$name",
-  "type": "azureblob",
-  "credentials": {
-    "connectionString": "$CONNECTION_STRING"
+  "name": "$INDEXER_NAME",
+  "dataSourceName": "$DATA_SOURCE_NAME",
+  "skillsetName": "$SKILLSET_NAME",
+  "targetIndexName": "$TARGET_INDEX_NAME",
+  "parameters": {
+    "configuration": {
+      "parsingMode": "$PARSING_MODE"
+    }
   },
-  "container": {
-    "name": "$CONTAINER_NAME"
-  }
+  "fieldMappings": [
+    {
+      "sourceFieldName": "$TITLE_SOURCE_FIELD_NAME",
+      "targetFieldName": "$TITLE_TARGET_FIELD_NAME"
+    }
+  ]
 }
 EOF
-}
-
-write_payload "$DATA_SOURCE_NAME"
 
 az rest --method put \
-  --uri "$SEARCH_SERVICE_ENDPOINT/datasources/$DATA_SOURCE_NAME" \
+  --uri "$SEARCH_SERVICE_ENDPOINT/indexers('$INDEXER_NAME')" \
   --url-parameters "api-version=$API_VERSION" \
   --headers "Content-Type=application/json" "api-key=$ADMIN_KEY" \
   --skip-authorization-header \
   --body @"$PAYLOAD_FILE"
-
-if [[ -n "${ADDITIONAL_DATA_SOURCE_NAME:-}" && "$ADDITIONAL_DATA_SOURCE_NAME" != "$DATA_SOURCE_NAME" ]]; then
-  write_payload "$ADDITIONAL_DATA_SOURCE_NAME"
-
-  az rest --method put \
-    --uri "$SEARCH_SERVICE_ENDPOINT/datasources/$ADDITIONAL_DATA_SOURCE_NAME" \
-    --url-parameters "api-version=$API_VERSION" \
-    --headers "Content-Type=application/json" "api-key=$ADMIN_KEY" \
-    --skip-authorization-header \
-    --body @"$PAYLOAD_FILE"
-fi
 '''
   }
 }
 
-output deploymentScriptName string = createDataSource.name
+output deploymentScriptName string = createIndexer.name

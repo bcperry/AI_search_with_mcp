@@ -65,3 +65,48 @@ Use these values in application configuration or automation steps that consume t
 ## Role assignments
 
 The templates automatically grant the Azure AI Search service's system-assigned managed identity the **Cognitive Services OpenAI Contributor** role over the Azure OpenAI account. This permission is required for Entra ID-based access from Azure AI Search to both the GPT-4o and embeddings deployments. If additional workloads need access, assign the appropriate Azure OpenAI role (for example, **Cognitive Services OpenAI User**) to their managed identities at the OpenAI account scope.
+
+## Manual validation with `az rest`
+
+If you need to validate the index, skillset, or indexer definitions outside of an `azd` deployment, the repository includes ready-to-send payloads (`index-test.json`, `skillset-test.json`, and `indexer-test.json`). Update the placeholder values (for example, the OpenAI resource URI) and run the following from PowerShell:
+
+```powershell
+$resourceGroup = "<resource-group-name>"
+$searchServiceName = "<search-service-name>"
+$searchEndpoint = "https://$searchServiceName.search.windows.net"
+$apiVersion = "2024-09-01-preview"
+$indexName = "avcoe-demo-ai-search-mcp-index-and-vectorize"
+$skillsetName = "avcoe-demo-ai-search-mcp-index-and-vectorize-skillset"
+$indexerName = "avcoe-demo-ai-search-mcp-index-and-vectorize-indexer"
+$indexPayloadPath = "$(Resolve-Path ./index-test.json)"
+$skillsetPayloadPath = "$(Resolve-Path ./skillset-test.json)"
+$indexerPayloadPath = "$(Resolve-Path ./indexer-test.json)"
+
+$adminKey = az search admin-key show `
+	--resource-group $resourceGroup `
+	--service-name $searchServiceName `
+	--query primaryKey -o tsv
+
+az rest --method put `
+	--uri "$searchEndpoint/indexes('$indexName')" `
+	--headers "Content-Type=application/json" "api-key=$adminKey" `
+	--url-parameters "api-version=$apiVersion" `
+	--body @$indexPayloadPath `
+	--skip-authorization-header
+
+az rest --method put `
+	--uri "$searchEndpoint/skillsets/$skillsetName" `
+	--headers "Content-Type=application/json" "api-key=$adminKey" `
+	--url-parameters "api-version=$apiVersion" `
+	--body @$skillsetPayloadPath `
+	--skip-authorization-header
+
+az rest --method put `
+	--uri "$searchEndpoint/indexers('$indexerName')" `
+	--headers "Content-Type=application/json" "api-key=$adminKey" `
+	--url-parameters "api-version=$apiVersion" `
+	--body @$indexerPayloadPath `
+	--skip-authorization-header
+```
+
+The manual calls help troubleshoot API schema issues quickly and mirror the deployment script logic used by the Bicep modules.

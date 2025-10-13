@@ -61,6 +61,19 @@ param openAiEmbeddingsModelVersion string = '2'
 @minValue(1)
 param openAiEmbeddingsDeploymentCapacity int = 10
 
+@description('Embedding vector dimensions produced by the Azure AI Foundry embeddings deployment.')
+@minValue(1)
+param openAiEmbeddingsDimensions int = 1536
+
+@description('Value used to force the index deployment script to rerun on each deployment.')
+param searchIndexScriptForceUpdateTag string = newGuid()
+
+@description('Value used to force the skillset deployment script to rerun on each deployment.')
+param searchSkillsetScriptForceUpdateTag string = newGuid()
+
+@description('Value used to force the indexer deployment script to rerun on each deployment.')
+param searchIndexerScriptForceUpdateTag string = newGuid()
+
 var normalizedEnvironmentName = toLower(replace(environmentName, ' ', '-'))
 var finalResourceGroupName = resourceGroupName
 var userAssignedIdentityName = '${normalizedEnvironmentName}-uami'
@@ -71,6 +84,21 @@ var storageAccountModuleName = '${normalizedEnvironmentName}-storage-deploy'
 var storageContainerName = 'aisearchdata'
 var searchDataSourceName = '${normalizedEnvironmentName}-storage-ds'
 var createSearchDataSourceModuleName = '${normalizedEnvironmentName}-datasource-script'
+var searchSkillsetName = '${normalizedEnvironmentName}-index-and-vectorize-skillset'
+var searchSkillsetModuleName = '${normalizedEnvironmentName}-skillset-script'
+var searchIndexModuleName = '${normalizedEnvironmentName}-index-script'
+var searchTargetIndexName = '${normalizedEnvironmentName}-index-and-vectorize'
+var searchIndexerName = '${normalizedEnvironmentName}-index-and-vectorize-indexer'
+var searchIndexerModuleName = '${normalizedEnvironmentName}-indexer-script'
+var searchIndexChunkKeyFieldName = 'chunk_id'
+var searchIndexParentKeyFieldName = 'parent_id'
+var searchIndexChunkFieldName = 'chunk'
+var searchIndexTitleFieldName = 'title'
+var searchIndexVectorFieldName = 'text_vector'
+var searchIndexSemanticConfigurationName = 'index-and-vectorize-semantic-configuration'
+var searchIndexVectorAlgorithmName = 'index-and-vectorize-algorithm'
+var searchIndexVectorProfileName = 'index-and-vectorize-azureOpenAi-text-profile'
+var searchIndexVectorizerName = 'index-and-vectorize-azureOpenAi-text-vectorizer'
 var scriptIdentityRoleAssignmentName = guid(subscription().id, finalResourceGroupName, searchServiceName, userAssignedIdentityName, 'search-service-contributor')
 var cloudSuffixes = {
   AzureCloud: 'windows.net'
@@ -224,6 +252,104 @@ module createSearchDataSource './createSearchDataSource.bicep' = {
   dependsOn: [
     scriptIdentitySearchContributor
     searchServiceBlobDataReader
+  ]
+}
+
+module createSearchIndex './createSearchIndex.bicep' = {
+  name: searchIndexModuleName
+  scope: rg
+  params: {
+    location: location
+    searchServiceName: searchServiceName
+    indexName: searchTargetIndexName
+    searchServiceEndpoint: searchService.outputs.searchServiceEndpoint
+    resourceGroupName: finalResourceGroupName
+    userAssignedIdentityResourceId: userAssignedIdentity.outputs.userAssignedIdentityId
+    userAssignedIdentityClientId: userAssignedIdentity.outputs.userAssignedIdentityClientId
+    cloudName: cloudName
+    subscriptionId: subscription().subscriptionId
+    tenantId: subscription().tenantId
+    vectorDimensions: openAiEmbeddingsDimensions
+    vectorFieldName: searchIndexVectorFieldName
+    chunkFieldName: searchIndexChunkFieldName
+    titleFieldName: searchIndexTitleFieldName
+    chunkKeyFieldName: searchIndexChunkKeyFieldName
+    parentKeyFieldName: searchIndexParentKeyFieldName
+    semanticConfigurationName: searchIndexSemanticConfigurationName
+    vectorSearchAlgorithmName: searchIndexVectorAlgorithmName
+    vectorSearchProfileName: searchIndexVectorProfileName
+    vectorSearchVectorizerName: searchIndexVectorizerName
+    openAiResourceUri: openAi.outputs.openAiAccountEndpoint
+    openAiDeploymentId: openAi.outputs.openAiEmbeddingsDeploymentName
+    openAiModelName: openAi.outputs.openAiEmbeddingsDeploymentModel
+    forceUpdateTag: searchIndexScriptForceUpdateTag
+  }
+  dependsOn: [
+    scriptIdentitySearchContributor
+    openAiAccess
+  ]
+}
+
+module createSearchSkillset './createSkillset.bicep' = {
+  name: searchSkillsetModuleName
+  scope: rg
+  params: {
+    location: location
+    searchServiceName: searchServiceName
+    skillsetName: searchSkillsetName
+    searchServiceEndpoint: searchService.outputs.searchServiceEndpoint
+    resourceGroupName: finalResourceGroupName
+    userAssignedIdentityResourceId: userAssignedIdentity.outputs.userAssignedIdentityId
+    userAssignedIdentityClientId: userAssignedIdentity.outputs.userAssignedIdentityClientId
+    cloudName: cloudName
+    subscriptionId: subscription().subscriptionId
+    tenantId: subscription().tenantId
+    openAiResourceUri: openAi.outputs.openAiAccountEndpoint
+    openAiDeploymentId: openAi.outputs.openAiEmbeddingsDeploymentName
+    openAiModelName: openAi.outputs.openAiEmbeddingsDeploymentModel
+    openAiEmbeddingDimensions: openAiEmbeddingsDimensions
+    targetIndexName: searchTargetIndexName
+    parentKeyFieldName: searchIndexParentKeyFieldName
+    vectorFieldName: searchIndexVectorFieldName
+    chunkFieldName: searchIndexChunkFieldName
+    titleFieldName: searchIndexTitleFieldName
+    forceUpdateTag: searchSkillsetScriptForceUpdateTag
+  }
+  dependsOn: [
+    scriptIdentitySearchContributor
+    createSearchDataSource
+    openAiAccess
+    createSearchIndex
+  ]
+}
+
+module createSearchIndexer './createSearchIndexer.bicep' = {
+  name: searchIndexerModuleName
+  scope: rg
+  params: {
+    location: location
+    searchServiceName: searchServiceName
+    indexerName: searchIndexerName
+    dataSourceName: searchDataSourceName
+    skillsetName: searchSkillsetName
+    targetIndexName: searchTargetIndexName
+    searchServiceEndpoint: searchService.outputs.searchServiceEndpoint
+    resourceGroupName: finalResourceGroupName
+    userAssignedIdentityResourceId: userAssignedIdentity.outputs.userAssignedIdentityId
+    userAssignedIdentityClientId: userAssignedIdentity.outputs.userAssignedIdentityClientId
+    cloudName: cloudName
+    subscriptionId: subscription().subscriptionId
+    tenantId: subscription().tenantId
+    parsingMode: 'default'
+    titleSourceFieldName: 'metadata_storage_name'
+    titleTargetFieldName: searchIndexTitleFieldName
+    forceUpdateTag: searchIndexerScriptForceUpdateTag
+  }
+  dependsOn: [
+    scriptIdentitySearchContributor
+    createSearchDataSource
+    createSearchIndex
+    createSearchSkillset
   ]
 }
 
