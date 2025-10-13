@@ -41,6 +41,26 @@ param storageAccountSku string
 ])
 param cloudName string
 
+@description('Model identifier to deploy to Azure AI Foundry.')
+param openAiModelName string = 'gpt-4o'
+
+@description('Model version for the Azure AI Foundry deployment.')
+param openAiModelVersion string = '2024-11-20'
+
+@description('Throughput units for the Azure AI Foundry deployment.')
+@minValue(1)
+param openAiDeploymentCapacity int = 10
+
+@description('Embeddings model identifier to deploy to Azure AI Foundry.')
+param openAiEmbeddingsModelName string = 'text-embedding-ada-002'
+
+@description('Embeddings model version for the Azure AI Foundry deployment.')
+param openAiEmbeddingsModelVersion string = '2'
+
+@description('Throughput units for the Azure AI Foundry embeddings deployment.')
+@minValue(1)
+param openAiEmbeddingsDeploymentCapacity int = 10
+
 var normalizedEnvironmentName = toLower(replace(environmentName, ' ', '-'))
 var finalResourceGroupName = resourceGroupName
 var userAssignedIdentityName = '${normalizedEnvironmentName}-uami'
@@ -70,6 +90,16 @@ var cleanedEnvironmentName = replace(normalizedEnvironmentName, '-', '')
 var storageAccountBaseName = length(cleanedEnvironmentName) > 0 ? cleanedEnvironmentName : 'env'
 var storageAccountCandidate = '${storageAccountBaseName}stg'
 var storageAccountName = length(storageAccountCandidate) > 24 ? substring(storageAccountCandidate, 0, 24) : storageAccountCandidate
+var openAiAccountModuleName = '${normalizedEnvironmentName}-aoai-deploy'
+var openAiAccountBaseName = length(normalizedEnvironmentName) > 0 ? normalizedEnvironmentName : 'env'
+var openAiAccountCandidate = '${openAiAccountBaseName}-aoai'
+var openAiAccountName = length(openAiAccountCandidate) > 44 ? substring(openAiAccountCandidate, 0, 44) : openAiAccountCandidate
+var openAiSubdomainBase = replace(openAiAccountBaseName, '-', '')
+var openAiSubdomainBaseClean = length(openAiSubdomainBase) > 0 ? openAiSubdomainBase : 'aoai'
+var openAiSubdomainWithSuffix = '${openAiSubdomainBaseClean}aoai'
+var openAiCustomSubDomainName = length(openAiSubdomainWithSuffix) > 30 ? substring(openAiSubdomainWithSuffix, 0, 30) : openAiSubdomainWithSuffix
+var openAiDeploymentName = openAiModelName
+var openAiEmbeddingsDeploymentName = openAiEmbeddingsModelName
 
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   name: finalResourceGroupName
@@ -114,6 +144,27 @@ module storageAccount './storageAccount.bicep' = {
     }
     endpointCoreSuffix: resolvedStorageEndpointCoreSuffix
     containerName: storageContainerName
+  }
+}
+
+module openAi './azureOpenAi.bicep' = {
+  name: openAiAccountModuleName
+  scope: rg
+  params: {
+    openAiAccountName: openAiAccountName
+    customSubDomainName: openAiCustomSubDomainName
+    location: location
+    tags: {
+      'azd-env-name': environmentName
+    }
+    deploymentName: openAiDeploymentName
+    modelName: openAiModelName
+    modelVersion: openAiModelVersion
+    capacity: openAiDeploymentCapacity
+    embeddingsDeploymentName: openAiEmbeddingsDeploymentName
+    embeddingsModelName: openAiEmbeddingsModelName
+    embeddingsModelVersion: openAiEmbeddingsModelVersion
+    embeddingsCapacity: openAiEmbeddingsDeploymentCapacity
   }
 }
 
@@ -170,6 +221,15 @@ output SEARCH_SERVICE_NAME string = searchServiceName
 output SEARCH_SERVICE_ENDPOINT string = searchService.outputs.searchServiceEndpoint
 output SEARCH_SERVICE_ENDPOINT_SUFFIX string = resolvedSearchEndpointSuffix
 output CLOUD_NAME string = cloudName
+output OPENAI_ACCOUNT_ID string = openAi.outputs.openAiAccountId
+output OPENAI_ACCOUNT_NAME string = openAi.outputs.openAiAccountName
+output OPENAI_ACCOUNT_ENDPOINT string = openAi.outputs.openAiAccountEndpoint
+output OPENAI_DEPLOYMENT_ID string = openAi.outputs.openAiDeploymentId
+output OPENAI_DEPLOYMENT_NAME string = openAi.outputs.openAiDeploymentName
+output OPENAI_DEPLOYMENT_MODEL string = openAi.outputs.openAiDeploymentModel
+output OPENAI_EMBEDDINGS_DEPLOYMENT_ID string = openAi.outputs.openAiEmbeddingsDeploymentId
+output OPENAI_EMBEDDINGS_DEPLOYMENT_NAME string = openAi.outputs.openAiEmbeddingsDeploymentName
+output OPENAI_EMBEDDINGS_DEPLOYMENT_MODEL string = openAi.outputs.openAiEmbeddingsDeploymentModel
 output STORAGE_ACCOUNT_ID string = storageAccount.outputs.storageAccountId
 output STORAGE_ACCOUNT_NAME string = storageAccountName
 output STORAGE_ACCOUNT_BLOB_ENDPOINT string = storageAccount.outputs.blobEndpoint
