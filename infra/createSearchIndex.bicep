@@ -247,11 +247,11 @@ cat <<EOF >"$PAYLOAD_FILE"
       "name": "$TITLE_FIELD_NAME",
       "type": "Edm.String",
       "searchable": true,
-      "filterable": false,
+      "filterable": true,
       "retrievable": true,
       "stored": true,
       "sortable": false,
-      "facetable": false,
+      "facetable": true,
       "key": false,
       "synonymMaps": []
     },
