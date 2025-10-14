@@ -378,3 +378,4 @@ output STORAGE_ACCOUNT_QUEUE_ENDPOINT string = storageAccount.outputs.queueEndpo
 output STORAGE_ACCOUNT_FILE_ENDPOINT string = storageAccount.outputs.fileEndpoint
 output STORAGE_ACCOUNT_CONTAINER_NAME string = storageContainerName
 output SEARCH_DATA_SOURCE_NAME string = searchDataSourceName
+output SEARCH_INDEX_NAME string = searchTargetIndexName

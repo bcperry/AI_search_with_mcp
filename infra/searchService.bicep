@@ -15,7 +15,7 @@ param tags object = {}
 @description('DNS suffix for the Azure AI Search service endpoint.')
 param endpointSuffix string = '.search.windows.net'
 
-resource searchService 'Microsoft.Search/searchServices@2020-08-01' = {
+resource searchService 'Microsoft.Search/searchServices@2024-06-01-preview' = {
   name: searchServiceName
   location: location
   sku: {
@@ -29,6 +29,12 @@ resource searchService 'Microsoft.Search/searchServices@2020-08-01' = {
     partitionCount: 1
     hostingMode: 'default'
     publicNetworkAccess: 'enabled'
+    disableLocalAuth: false
+    authOptions: {
+      aadOrApiKey: {
+        aadAuthFailureMode: 'http401WithBearerChallenge'
+      }
+    }
   }
   tags: tags
 }
