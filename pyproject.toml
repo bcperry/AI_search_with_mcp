@@ -16,4 +16,5 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel>=7.0.1",
+    "pandas>=2.3.3",
 ]
