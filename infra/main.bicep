@@ -284,6 +284,17 @@ module webApp './webApp.bicep' = {
   }
 }
 
+module webAppSearchDataReader './searchServiceRoleAssignment.bicep' = {
+  name: '${normalizedEnvironmentName}-webapp-search-reader'
+  scope: rg
+  params: {
+    roleAssignmentName: guid(subscription().id, finalResourceGroupName, searchServiceName, webAppName, 'search-data-reader')
+    searchServiceName: searchServiceName
+    principalId: webApp.outputs.webAppIdentityPrincipalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '1407120a-92aa-4202-b7e9-c0e197c71c8f')
+  }
+}
+
 module searchServiceBlobDataReader 'storageAccountRoleAssignment.bicep' = {
   name: '${normalizedEnvironmentName}-search-blob-reader'
   scope: rg
