@@ -44,8 +44,16 @@ def _escape_filter_value(value: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def _load_environment() -> Path:
-    """Load the first matching env file so credentials resolve via DefaultAzureCredential."""
+def _load_environment() -> Optional[Path]:
+    """Load the first matching env file so credentials resolve via DefaultAzureCredential.
+    
+    Only loads from .env file when running locally. In deployed environments (Azure),
+    environment variables should already be set via App Settings.
+    """
+    # Check if we're running in Azure (common Azure environment variables)
+    if os.getenv("WEBSITE_INSTANCE_ID") or os.getenv("WEBSITE_SITE_NAME"):
+        logger.info("Running in Azure - using existing environment variables")
+        return None
 
     env_file = next(
         (
@@ -56,9 +64,10 @@ def _load_environment() -> Path:
         None,
     )
     if env_file is None:
-        raise FileNotFoundError(
-            "Could not locate an avcoe-* environment directory under .azure"
+        logger.warning(
+            "Could not locate an avcoe-* environment directory under .azure - using existing environment variables"
         )
+        return None
 
     load_dotenv(dotenv_path=env_file, override=False)
     logger.info("Loaded environment variables from %s", env_file)
@@ -157,6 +166,7 @@ async def list_facets(
     }
 
 
+
 @mcp.tool()
 async def semantic_search(
     query: str,
@@ -165,7 +175,7 @@ async def semantic_search(
     select_fields: Optional[List[str]] = None,
     query_type: str = "semantic",
 ) -> Dict[str, Any]:
-    """Execute an intelligent search query against the Azure AI Search index with semantic ranking.
+    """Execute a search query against the Azure AI Search index with semantic ranking.
     
     This tool performs searches using Azure's semantic search capabilities, which understand natural
     language queries and rank results by semantic relevance rather than just keyword matching. It's

@@ -1,0 +1,6 @@
+aiohttp
+azure-identity
+azure-identity-broker
+azure-search-documents
+fastmcp
+python-dotenv

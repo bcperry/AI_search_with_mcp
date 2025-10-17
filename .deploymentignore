@@ -1,0 +1,8 @@
+__pycache__/*
+.venv/*
+infra/*
+.ruff_cache/*
+.azure/*
+*.ipynb
+uv.lock
+pyproject.toml

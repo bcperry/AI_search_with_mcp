@@ -5,3 +5,8 @@ metadata:
 infra:
   provider: bicep
   path: infra
+services:
+  mcp:
+    project: .
+    language: python
+    host: appservice

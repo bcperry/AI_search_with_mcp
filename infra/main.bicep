@@ -32,6 +32,45 @@ param searchServiceSku string
 ])
 param storageAccountSku string
 
+@description('SKU name for the App Service plan used to host the MCP application.')
+@allowed([
+  'P1v3'
+  'P2v3'
+  'P3v3'
+  'S1'
+  'S2'
+  'S3'
+  'B1'
+  'B2'
+  'B3'
+])
+param appServicePlanSkuName string = 'P1v3'
+
+@description('SKU tier for the App Service plan used to host the MCP application.')
+@allowed([
+  'PremiumV3'
+  'Standard'
+  'Basic'
+])
+param appServicePlanSkuTier string = 'PremiumV3'
+
+@description('Number of workers allocated to the App Service plan.')
+@minValue(1)
+param appServicePlanSkuCapacity int = 1
+
+@description('Python runtime version for the App Service Web App.')
+@allowed([
+  '3.10'
+  '3.11'
+])
+param webAppPythonVersion string = '3.10'
+
+@description('Startup command executed by the Web App when the container starts.')
+param webAppStartupCommand string = 'python main.py'
+
+@description('Whether to enable Always On for the Web App hosting the MCP application.')
+param webAppAlwaysOn bool = true
+
 @description('Azure cloud definition name (see `az cloud list`).')
 @allowed([
   'AzureCloud'
@@ -131,6 +170,12 @@ var openAiEmbeddingsDeploymentName = openAiEmbeddingsModelName
 var openAiRoleAssignmentModuleName = '${normalizedEnvironmentName}-aoai-role'
 var openAiContributorRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a001fd3d-188f-4b5d-821b-7da978bf7442')
 var openAiContributorRoleAssignmentName = guid(subscription().id, finalResourceGroupName, openAiAccountName, searchServiceName, 'openai-contributor')
+var appServicePlanName = '${normalizedEnvironmentName}-plan'
+var webAppModuleName = '${normalizedEnvironmentName}-webapp-deploy'
+var webAppBaseName = toLower(replace(replace(replace(resourceGroupName, '_', '-'), ' ', '-'), '--', '-'))
+var webAppBaseFallback = length(webAppBaseName) == 0 ? '${normalizedEnvironmentName}-app' : webAppBaseName
+var webAppNameCandidate = startsWith(webAppBaseFallback, '-') ? 'a${webAppBaseFallback}' : webAppBaseFallback
+var webAppName = length(webAppNameCandidate) > 60 ? substring(webAppNameCandidate, 0, 60) : webAppNameCandidate
 
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   name: finalResourceGroupName
@@ -207,6 +252,35 @@ module openAiAccess './openAiRoleAssignment.bicep' = {
     openAiAccountName: openAiAccountName
     principalId: searchService.outputs.searchServicePrincipalId
     roleDefinitionId: openAiContributorRoleDefinitionId
+  }
+}
+
+module webApp './webApp.bicep' = {
+  name: webAppModuleName
+  scope: rg
+  params: {
+    appServicePlanName: appServicePlanName
+    webAppName: webAppName
+    location: location
+    tags: {
+      'azd-env-name': environmentName
+      'azd-service-name': 'mcp'
+    }
+    appServicePlanSkuName: appServicePlanSkuName
+    appServicePlanSkuTier: appServicePlanSkuTier
+    appServicePlanSkuCapacity: appServicePlanSkuCapacity
+    pythonVersion: webAppPythonVersion
+    startupCommand: webAppStartupCommand
+    alwaysOn: webAppAlwaysOn
+    appSettings: {
+      AZURE_ENV_NAME: environmentName
+      CLOUD_NAME: cloudName
+      SEARCH_SERVICE_ENDPOINT: searchService.outputs.searchServiceEndpoint
+      SEARCH_INDEX_NAME: searchTargetIndexName
+      SEARCH_SERVICE_NAME: searchServiceName
+      OPENAI_ACCOUNT_ENDPOINT: openAi.outputs.openAiAccountEndpoint
+      OPENAI_EMBEDDINGS_DEPLOYMENT_NAME: openAi.outputs.openAiEmbeddingsDeploymentName
+    }
   }
 }
 
@@ -379,3 +453,9 @@ output STORAGE_ACCOUNT_FILE_ENDPOINT string = storageAccount.outputs.fileEndpoin
 output STORAGE_ACCOUNT_CONTAINER_NAME string = storageContainerName
 output SEARCH_DATA_SOURCE_NAME string = searchDataSourceName
 output SEARCH_INDEX_NAME string = searchTargetIndexName
+output WEB_APP_ID string = webApp.outputs.webAppId
+output WEB_APP_NAME string = webAppName
+output WEB_APP_DEFAULT_HOST_NAME string = webApp.outputs.webAppDefaultHostName
+output WEB_APP_MANAGED_IDENTITY_PRINCIPAL_ID string = webApp.outputs.webAppIdentityPrincipalId
+output AZURE_MCP_WEBAPP_NAME string = webAppName
+output AZURE_MCP_WEBAPP_RESOURCE_ID string = webApp.outputs.webAppId
