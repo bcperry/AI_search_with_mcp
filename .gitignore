@@ -10,3 +10,6 @@ wheels/
 .venv
 
 .ruff*
+
+# Environment files
+.env

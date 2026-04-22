@@ -1,0 +1,75 @@
+{
+  "@odata.context": "https://<search-service>.search.azure.us/indexes('<index-name>')/$metadata#docs(*)",
+  "@odata.count": 0,
+  "@search.answers": [
+    {
+      "key": "<answer-key-1>",
+      "text": "<anonymized-answer-text-1>",
+      "highlights": "<em><anonymized-answer-text-1></em>",
+      "score": 0.98
+    },
+    {
+      "key": "<answer-key-2>",
+      "text": "<anonymized-answer-text-2>",
+      "highlights": "<em><anonymized-answer-text-2></em>",
+      "score": 0.97
+    },
+    {
+      "key": "<answer-key-3>",
+      "text": "<anonymized-answer-text-3>",
+      "highlights": "<em><anonymized-answer-text-3></em>",
+      "score": 0.96
+    }
+  ],
+  "@search.nextPageParameters": {
+    "search": "<query-text>",
+    "count": true,
+    "queryType": "semantic",
+    "semanticConfiguration": "<semantic-config-name>",
+    "captions": "extractive",
+    "answers": "extractive|count-3",
+    "queryLanguage": "en-us",
+    "skip": 50,
+    "vectorQueries": [
+      {
+        "kind": "text",
+        "k": null,
+        "oversampling": null,
+        "fields": "content_embedding",
+        "vector": [],
+        "text": "<query-text>",
+        "url": null,
+        "base64Image": null,
+        "exhaustive": null,
+        "weight": null,
+        "filterOverride": null,
+        "queryRewrites": null,
+        "perDocumentVectorLimit": 0,
+        "threshold": null
+      }
+    ]
+  },
+  "value": [
+    {
+      "@search.score": 0.01,
+      "@search.rerankerScore": 2.5,
+      "@search.captions": [
+        {
+          "text": "<anonymized-caption-text>",
+          "highlights": "<em><anonymized-caption-text></em>"
+        }
+      ],
+      "content_id": "<content-id>",
+      "text_document_id": null,
+      "document_title": "<document-title>.pdf",
+      "image_document_id": "<image-document-id>",
+      "content_text": "<anonymized-content-text>",
+      "content_embedding": [],
+      "content_path": "<container-name>/<anonymized-path>/normalized_images_1.jpg",
+      "locationMetadata": {
+        "pageNumber": 1,
+        "boundingPolygons": "[[{\"x\":0,\"y\":0},{\"x\":1,\"y\":0},{\"x\":0,\"y\":1},{\"x\":1,\"y\":1}]]"
+      }
+    }
+  ]
+}

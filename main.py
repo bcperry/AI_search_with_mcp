@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import re
+from urllib.parse import urlparse, unquote
 from datetime import date, datetime
 from decimal import Decimal
 from functools import lru_cache
@@ -8,17 +10,95 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from azure.core.exceptions import HttpResponseError
-from azure.identity import AzureAuthorityHosts, DefaultAzureCredential
+from azure.core.credentials import TokenCredential
+from azure.identity import (
+    AzureAuthorityHosts,
+    AzureCliCredential,
+    ChainedTokenCredential,
+    EnvironmentCredential,
+    InteractiveBrowserCredential,
+    ManagedIdentityCredential,
+)
 from azure.search.documents import SearchClient
+from azure.search.documents.models import VectorizableTextQuery
+from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from fastmcp.server.auth.providers.jwt import JWTVerifier
+from fastmcp.utilities.types import Image
 
-mcp = FastMCP("Azure AI Search MCP")
 logger = logging.getLogger(__name__)
+
+# Load root .env early so MCP_AUTH_* vars are available at import time
+load_dotenv(override=False)
+
+
+def _apply_cloud_authority_from_env() -> None:
+    """Set AZURE_AUTHORITY_HOST for Azure Gov when CLOUD_NAME indicates government cloud."""
+    cloud_name = os.getenv("CLOUD_NAME", "").strip()
+    if cloud_name == "AzureUSGovernment" and not os.getenv("AZURE_AUTHORITY_HOST"):
+        os.environ["AZURE_AUTHORITY_HOST"] = AzureAuthorityHosts.AZURE_GOVERNMENT
+        logger.info("Set AZURE_AUTHORITY_HOST to %s", AzureAuthorityHosts.AZURE_GOVERNMENT)
+
+
+def _build_default_credential(authority_host: str) -> TokenCredential:
+    """Create a credential chain that avoids broker auth issues and supports Gov cloud."""
+    tenant_id = os.getenv("AZURE_TENANT_ID")
+
+    environment_credential = EnvironmentCredential(
+        additionally_allowed_tenants=["*"],
+        **({"authority": authority_host} if authority_host else {}),
+    )
+    managed_identity_credential = ManagedIdentityCredential()
+    azure_cli_credential = AzureCliCredential(tenant_id=tenant_id)
+    interactive_browser_credential = InteractiveBrowserCredential(
+        tenant_id=tenant_id,
+        additionally_allowed_tenants=["*"],
+        authority=authority_host,
+    )
+
+    return ChainedTokenCredential(
+        environment_credential,
+        managed_identity_credential,
+        azure_cli_credential,
+        interactive_browser_credential,
+    )
+
+
+_apply_cloud_authority_from_env()
+
+
+def _build_auth() -> Optional[JWTVerifier]:
+    """Return a JWTVerifier when MCP_AUTH_SECRET is set, otherwise None (no auth)."""
+    secret = os.getenv("MCP_AUTH_SECRET")
+    if not secret:
+        logger.warning("MCP_AUTH_SECRET is not set – running WITHOUT authentication")
+        return None
+    return JWTVerifier(
+        public_key=secret,
+        algorithm="HS256",
+        issuer=os.getenv("MCP_AUTH_ISSUER", "mcp-issuer"),
+        audience=os.getenv("MCP_AUTH_AUDIENCE", "azure-ai-search-mcp"),
+    )
+
+
+mcp = FastMCP("Azure AI Search MCP", auth=_build_auth())
 
 _ENV_DIRECTORY = Path.cwd() / ".azure"
 _ENV_PREFIX = "avcoe-*"
-_DEFAULT_SELECT_FIELDS = ["title", "chunk"]
+_VALID_CONTAINER_NAME_PATTERN = re.compile(r'^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$')
+_SEARCH_SELECT_FIELDS = [
+    "content_id",
+    "text_document_id",
+    "document_title",
+    "image_document_id",
+    "content_text",
+    "content_path",
+]
+_VECTOR_FIELD_CANDIDATES = ["content_embedding", "text_vector"]
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+_BLOB_FALLBACK_SCAN_LIMIT = 2000
+_BLOB_FALLBACK_PAGE_SIZE = 200
 
 
 def _make_jsonable(value: Any) -> Any:
@@ -26,26 +106,88 @@ def _make_jsonable(value: Any) -> Any:
 
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
+    if hasattr(value, "as_dict") and callable(value.as_dict):
+        return _make_jsonable(value.as_dict())
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, dict):
-        return {key: _make_jsonable(val) for key, val in value.items()}
+        result: Dict[str, Any] = {}
+        for key, val in value.items():
+            if key == "additional_properties" and val is None:
+                continue
+            result[key] = _make_jsonable(val)
+        return result
     if isinstance(value, (list, tuple)):
         return [_make_jsonable(item) for item in value]
     return str(value)
 
 
-def _escape_filter_value(value: str) -> str:
-    """Escape single quotes for OData filter expressions."""
+def _should_exclude_search_field(field_name: str, value: Any) -> bool:
+    """Exclude vector and embedding payloads from search results."""
 
-    return value.replace("'", "''")
+    normalized_name = field_name.lower()
+    if "vector" in normalized_name or "embedding" in normalized_name:
+        return True
+    if isinstance(value, (list, tuple)) and value:
+        if all(isinstance(item, (int, float)) for item in value):
+            return True
+    return False
+
+
+def _sanitize_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a search hit with vector fields removed and values made JSON-safe."""
+
+    result: Dict[str, Any] = {}
+    for key, value in hit.items():
+        if _should_exclude_search_field(key, value):
+            continue
+
+        output_key = key
+        if key == "@search.reranker_score":
+            output_key = "@search.rerankerScore"
+
+        result[output_key] = _make_jsonable(value)
+    return result
+
+
+def _get_semantic_configuration_candidates(index_name: str) -> List[Optional[str]]:
+    """Return candidate semantic configuration names for the active index."""
+
+    configured = os.getenv("SEARCH_SEMANTIC_CONFIGURATION_NAME")
+    candidates = [
+        configured,
+        f"{index_name}-semantic-configuration",
+        "multimodal-rag-semantic-configuration",
+        "index-and-vectorize-semantic-configuration",
+    ]
+    seen = set()
+    result: List[Optional[str]] = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+    return result
+
+
+def _extract_unknown_field_name(exc: HttpResponseError) -> Optional[str]:
+    """Extract the field name from common Azure Search unknown-field errors."""
+
+    message = str(exc)
+    match = re.search(r"Unknown field '([^']+)'", message)
+    if match:
+        return match.group(1)
+    match = re.search(r"property named '([^']+)'", message)
+    if match:
+        return match.group(1)
+    return None
 
 
 @lru_cache(maxsize=1)
 def _load_environment() -> Optional[Path]:
-    """Load the first matching env file so credentials resolve via DefaultAzureCredential.
+    """Load the first matching env file so Azure credentials resolve locally.
     
     Only loads from .env file when running locally. In deployed environments (Azure),
     environment variables should already be set via App Settings.
@@ -64,14 +206,198 @@ def _load_environment() -> Optional[Path]:
         None,
     )
     if env_file is None:
+        root_env = Path.cwd() / ".env"
+        if root_env.exists():
+            load_dotenv(dotenv_path=root_env, override=False)
+            logger.info("Loaded environment variables from %s", root_env)
+            _apply_cloud_authority_from_env()
+            return root_env
+
         logger.warning(
-            "Could not locate an avcoe-* environment directory under .azure - using existing environment variables"
+            "Could not locate an avcoe-* environment directory under .azure and no root .env found - using existing environment variables"
         )
+        _apply_cloud_authority_from_env()
         return None
 
     load_dotenv(dotenv_path=env_file, override=False)
     logger.info("Loaded environment variables from %s", env_file)
+    _apply_cloud_authority_from_env()
     return env_file
+
+
+@lru_cache(maxsize=1)
+def _get_blob_service_client() -> Optional[BlobServiceClient]:
+    """Construct a BlobServiceClient for downloading images from Azure Blob Storage."""
+    _load_environment()
+    blob_endpoint = os.getenv("STORAGE_ACCOUNT_BLOB_ENDPOINT")
+    if not blob_endpoint:
+        logger.warning("STORAGE_ACCOUNT_BLOB_ENDPOINT is not set – image downloads disabled")
+        return None
+
+    cloud_name = os.getenv("CLOUD_NAME", "").strip()
+    if cloud_name == "AzureUSGovernment":
+        authority_host = AzureAuthorityHosts.AZURE_GOVERNMENT
+    else:
+        authority_host = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+
+    credential = _build_default_credential(authority_host)
+    return BlobServiceClient(account_url=blob_endpoint, credential=credential)
+
+
+def _get_default_blob_container_name() -> Optional[str]:
+    """Return the configured default blob container name when available."""
+    _load_environment()
+    container_name = os.getenv("STORAGE_ACCOUNT_CONTAINER_NAME")
+    if not container_name:
+        logger.warning("STORAGE_ACCOUNT_CONTAINER_NAME is not set – blob-only content paths may fail")
+        return None
+    return container_name
+
+
+def _is_valid_blob_container_name(value: str) -> bool:
+    """Return True when the value is a plausible Azure Blob container name."""
+    if '--' in value:
+        return False
+    return bool(_VALID_CONTAINER_NAME_PATTERN.fullmatch(value))
+
+
+def _is_likely_image_content_path(value: Optional[str]) -> bool:
+    """Return True when the supplied path looks like an image blob path or URL."""
+    if not value:
+        return False
+
+    normalized_value = unquote(value.strip())
+    if not normalized_value:
+        return False
+
+    parsed = urlparse(normalized_value)
+    path_value = parsed.path if parsed.scheme and parsed.netloc else normalized_value
+    suffix = Path(path_value).suffix.lower()
+    return suffix in _IMAGE_EXTENSIONS
+
+
+def _iter_limited_blob_names(client: BlobServiceClient, container_name: str):
+    """Yield blob names from a container with a hard cap to avoid full-container scans."""
+    scanned = 0
+    pager = client.get_container_client(container_name).list_blobs(name_starts_with="").by_page(
+        results_per_page=_BLOB_FALLBACK_PAGE_SIZE
+    )
+    for page in pager:
+        for blob_item in page:
+            candidate_name = getattr(blob_item, "name", "")
+            if candidate_name:
+                yield candidate_name
+            scanned += 1
+            if scanned >= _BLOB_FALLBACK_SCAN_LIMIT:
+                logger.warning(
+                    "Stopped blob fallback scan after %s entries in container '%s'",
+                    _BLOB_FALLBACK_SCAN_LIMIT,
+                    container_name,
+                )
+                return
+
+
+def _build_blob_suffix_candidates(blob_name: str) -> List[str]:
+    """Build likely blob suffixes for exact-image fallback matching."""
+
+    candidates: List[str] = []
+    markers = ["/normalized_images_", "_normalized_images_"]
+    for marker in markers:
+        marker_index = blob_name.rfind(marker)
+        if marker_index < 0:
+            continue
+
+        candidates.append(blob_name[marker_index + 1 :])
+        candidates.append(blob_name[marker_index + len(marker) - len("normalized_images_") :])
+
+    basename = Path(blob_name).name
+    if basename:
+        candidates.append(basename)
+
+    seen = set()
+    result: List[str] = []
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+    return result
+
+
+async def _download_blob_image(content_path: str) -> Optional[Image]:
+    """Download an image from blob storage using a full URL or blob-relative content_path.
+
+    Returns an Image object if successful, None otherwise.
+    """
+    client = _get_blob_service_client()
+    if client is None:
+        return None
+
+    normalized_input = unquote((content_path or "").strip())
+    if not _is_likely_image_content_path(normalized_input):
+        logger.warning("Rejected non-image content_path: %s", content_path)
+        return None
+
+    parsed = urlparse(normalized_input)
+
+    # Accept either a full blob URL or a relative blob path.
+    if parsed.scheme and parsed.netloc:
+        path_value = parsed.path.lstrip("/")
+    else:
+        path_value = normalized_input.lstrip("/")
+
+    parts = path_value.split("/", 1)
+    default_container_name = _get_default_blob_container_name()
+
+    if len(parts) != 2:
+        logger.warning("Invalid content_path format: %s", content_path)
+        return None
+
+    candidate_container_name, candidate_blob_name = parts
+    if default_container_name and not _is_valid_blob_container_name(candidate_container_name):
+        container_name = default_container_name
+        blob_name = path_value
+    else:
+        container_name = candidate_container_name
+        blob_name = candidate_blob_name
+
+    def _find_blob_by_suffix() -> Optional[str]:
+        suffix_candidates = _build_blob_suffix_candidates(blob_name)
+        if not suffix_candidates:
+            return None
+
+        for candidate_name in _iter_limited_blob_names(client, container_name):
+            for expected_suffix in suffix_candidates:
+                if candidate_name.endswith(expected_suffix):
+                    return candidate_name
+        return None
+
+    def _download() -> bytes:
+        blob_client = client.get_blob_client(container=container_name, blob=blob_name)
+        try:
+            return blob_client.download_blob().readall()
+        except Exception:
+            fallback_blob_name = _find_blob_by_suffix()
+            if not fallback_blob_name:
+                raise
+
+            logger.info(
+                "Exact blob not found for content_path. Using suffix fallback blob '%s'",
+                fallback_blob_name,
+            )
+            fallback_blob_client = client.get_blob_client(container=container_name, blob=fallback_blob_name)
+            return fallback_blob_client.download_blob().readall()
+
+    try:
+        data = await asyncio.to_thread(_download)
+    except Exception:
+        logger.exception("Failed to download image from %s", content_path)
+        return None
+
+    # Determine image format from the file extension
+    ext = Path(path_value).suffix.lower().lstrip(".")
+    fmt = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}.get(ext, "jpeg")
+    return Image(data=data, format=fmt)
 
 
 @lru_cache(maxsize=1)
@@ -102,132 +428,26 @@ def _get_search_client(index_name: Optional[str] = None) -> SearchClient:
         authority_host,
     )
 
-    credential = DefaultAzureCredential(authority=authority_host)
+    credential = _build_default_credential(authority_host)
     return SearchClient(endpoint=endpoint, index_name=resolved_index, credential=credential, audience=audience)
-
-
-@mcp.tool()
-async def list_facets(
-    facet_name: str = "title",
-    search_text: str = "*",
-) -> Dict[str, Any]:
-    """Retrieve faceted navigation values from the Azure AI Search index.
-    
-    This tool returns aggregated counts of distinct values for a specified field in the search index,
-    commonly used to build filters or understand the distribution of values across documents.
-    
-    Args:
-        facet_name: The name of the field to facet on (e.g., "title", "category", "author").
-                   Must be a facetable field in your search index schema. Defaults to "title".
-        search_text: Optional search query to scope the facet results. Use "*" (default) to 
-                    retrieve facets across all documents, or provide a query string to only
-                    facet within matching documents.
-    
-    Returns:
-        A dictionary containing:
-        - facet: The name of the field that was faceted
-        - search_text: The query used to scope results
-        - values: List of facet value objects, each containing:
-          - value: The distinct field value
-          - count: Number of documents with this value
-    
-    Example use cases:
-        - List all unique document titles: list_facets(facet_name="title")
-        - Get category distribution: list_facets(facet_name="category")
-        - Find authors in security-related docs: list_facets(facet_name="author", search_text="security")
-    
-    Raises:
-        RuntimeError: If the search service is unreachable or the field is not facetable.
-    """
-
-    client = _get_search_client()
-
-    def _run() -> List[Dict[str, Any]]:
-        results = client.search(
-            search_text,
-            facets=[facet_name],
-            top=0,
-        )
-        facets = results.get_facets().get(facet_name, [])
-        return [_make_jsonable(facet) for facet in facets]
-
-    try:
-        values = await asyncio.to_thread(_run)
-    except HttpResponseError as exc:
-        logger.exception("Facet retrieval failed for %s", facet_name)
-        raise RuntimeError(
-            f"Failed to retrieve facets for '{facet_name}': {str(exc)}"
-        ) from exc
-
-    return {
-        "facet": facet_name,
-        "search_text": search_text,
-        "values": values,
-    }
-
 
 
 @mcp.tool()
 async def semantic_search(
     query: str,
     top: int = 3,
-    facet_value: Optional[str] = None,
-    select_fields: Optional[List[str]] = None,
-    query_type: str = "semantic",
 ) -> Dict[str, Any]:
-    """Execute a search query against the Azure AI Search index with semantic ranking.
-    
-    This tool performs searches using Azure's semantic search capabilities, which understand natural
-    language queries and rank results by semantic relevance rather than just keyword matching. It's
-    ideal for question-answering scenarios, document retrieval, and RAG (Retrieval Augmented Generation).
-    
+    """Run hybrid semantic search and return the portal-style non-vector hit data.
+
     Args:
-        query: Natural language search query (e.g., "what is an example of a group 2 UAS" or 
-              "security best practices for containers"). The semantic ranker will interpret
-              the query's intent and return the most contextually relevant documents.
-        
-        top: Maximum number of documents to return (default: 3). Higher values provide more
-            context but may include less relevant results. Typical range: 1-10 for RAG scenarios.
-        
-        facet_value: Optional filter to restrict search to documents with a specific title value.
-                    Use this to scope searches within a particular document or category.
-                    Example: "DoD Unmanned Systems Roadmap 2020" to search only within that document.
-                    The value is automatically escaped for safe OData filter expressions.
-        
-        select_fields: List of field names to include in results (default: ["title", "chunk"]).
-                      Reduces payload size and focuses on relevant fields. Common fields include:
-                      "title", "chunk", "content", "metadata", "url", etc.
-        
-        query_type: Search algorithm to use. Options:
-                   - "semantic" (default): Uses AI-powered semantic ranking for best relevance
-                   - "simple": Basic keyword matching without semantic understanding
-    
+        query: Natural language search query.
+        top: Maximum number of hits to return.
+
     Returns:
-        A dictionary containing:
-        - query: The original search query
-        - query_type: The search algorithm used
-        - top: Number of results requested
-        - filter: The OData filter expression applied (if facet_value was specified)
-        - select: List of fields included in results
-        - total_count: Total number of matching documents (may exceed 'top')
-        - documents: List of matching documents, each containing the requested fields
-                    plus a @search.score indicating relevance (higher is better)
-    
-    Example use cases:
-        - Answer questions: semantic_search("what are the safety requirements?")
-        - Find specific info in a document: semantic_search("launch procedures", facet_value="Flight Manual")
-        - Get diverse results: semantic_search("drone regulations", top=10)
-        - Retrieve full documents: semantic_search("policy overview", select_fields=["title", "content", "metadata"])
-    
-    Best practices:
-        - Use semantic search (default) for natural language queries and Q&A
-        - Increase 'top' to 5-10 when you need comprehensive context
-        - Apply facet_value filters when you know which document to search within
-        - Request only necessary fields via select_fields to minimize latency
-        - Check total_count to understand if you're seeing all relevant results
-    
+        A dictionary containing semantic answers, total count, and result hits with vector fields removed.
+
     Raises:
-        ValueError: If top <= 0 or query_type is invalid
+        ValueError: If top <= 0
         RuntimeError: If the search request fails or the service is unreachable
     """
 
@@ -235,45 +455,111 @@ async def semantic_search(
         raise ValueError("top must be greater than zero")
 
     client = _get_search_client()
-    select = select_fields or _DEFAULT_SELECT_FIELDS
-    allowed_query_types = {"semantic", "simple"}
-    if query_type not in allowed_query_types:
-        raise ValueError(f"query_type must be one of {sorted(allowed_query_types)}")
+    endpoint = os.getenv("SEARCH_SERVICE_ENDPOINT") or ""
+    index_name = os.getenv("SEARCH_INDEX_NAME") or ""
+    semantic_configuration_candidates = _get_semantic_configuration_candidates(index_name)
 
-    filter_expression: Optional[str] = None
-    if facet_value:
-        filter_expression = f"title eq '{_escape_filter_value(facet_value)}'"
-
-    def _run() -> Dict[str, Any]:
+    def _run(vector_field_name: str, semantic_configuration_name: Optional[str]) -> Dict[str, Any]:
         search_kwargs: Dict[str, Any] = {
             "include_total_count": True,
             "top": top,
-            "select": select,
-            "query_type": query_type,
+            "query_type": "semantic",
+            "semantic_query": query,
+            "query_answer": "extractive",
+            "query_answer_count": top,
+            "query_caption": "extractive",
+            "query_caption_highlight_enabled": True,
+            "select": list(_SEARCH_SELECT_FIELDS),
+            "vector_queries": [
+                VectorizableTextQuery(
+                    text=query,
+                    fields=vector_field_name,
+                )
+            ],
         }
-        if filter_expression:
-            search_kwargs["filter"] = filter_expression
+        if semantic_configuration_name:
+            search_kwargs["semantic_configuration_name"] = semantic_configuration_name
 
         results = client.search(query, **search_kwargs)
-        documents = [_make_jsonable(dict(hit)) for hit in results]
-        total = results.get_count()
+        hits = [_sanitize_search_hit(dict(hit)) for hit in results]
+        answers = [_make_jsonable(answer) for answer in results.get_answers() or []]
+
         return {
-            "query": query,
-            "query_type": query_type,
-            "top": top,
-            "filter": filter_expression,
-            "select": select,
-            "total_count": total,
-            "documents": documents,
+            "@odata.context": f"{endpoint}/indexes('{index_name}')/$metadata#docs(*)",
+            "@odata.count": results.get_count(),
+            "@search.answers": answers,
+            "@search.nextPageParameters": {
+                "search": query,
+                "count": True,
+                "queryType": "semantic",
+                "semanticConfiguration": semantic_configuration_name,
+                "captions": "extractive",
+                "answers": f"extractive|count-{top}",
+                "select": ",".join(_SEARCH_SELECT_FIELDS),
+                "vectorQueries": [
+                    {
+                        "kind": "text",
+                        "fields": vector_field_name,
+                        "text": query,
+                    }
+                ],
+            },
+            "value": hits,
         }
 
-    try:
-        payload = await asyncio.to_thread(_run)
-    except HttpResponseError as exc:
-        logger.exception("Search request failed for query '%s'", query)
-        raise RuntimeError(f"Search request failed: {str(exc)}") from exc
+    last_error: Optional[HttpResponseError] = None
+    for semantic_configuration_name in semantic_configuration_candidates:
+        for vector_field_name in _VECTOR_FIELD_CANDIDATES:
+            try:
+                return await asyncio.to_thread(_run, vector_field_name, semantic_configuration_name)
+            except HttpResponseError as exc:
+                last_error = exc
+                unknown_field = _extract_unknown_field_name(exc)
+                if unknown_field and unknown_field in _SEARCH_SELECT_FIELDS:
+                    logger.exception("Required select field missing for query '%s'", query)
+                    raise RuntimeError(f"Search request failed: {str(exc)}") from exc
+                continue
 
-    return payload
+    logger.exception("Search request failed for query '%s'", query)
+    raise RuntimeError(f"Search request failed: {str(last_error)}" if last_error else "Search request failed")
+
+
+@mcp.tool(output_schema=None)
+async def get_image_from_content_path(
+    content_path: str,
+) -> Image:
+    """Download an image from Azure Blob Storage and return MCP Image content.
+
+    As a general rule, use this tool only with content paths returned by semantic_search, not arbitrary source document paths.
+    Users usually do not want screenshots of text or scanned pages with little visual value. Use this tool when semantic_search
+    describes actual useful or interesting visual content that should be shown directly to the user.
+
+    Args:
+        content_path: Full blob URL or blob path. If the container is omitted, STORAGE_ACCOUNT_CONTAINER_NAME is used.
+
+    Returns:
+        MCP Image content suitable for clients that render image blocks. 
+
+    Raises:
+        ValueError: If content_path is empty.
+        RuntimeError: If the image cannot be downloaded.
+    """
+
+    normalized_path = (content_path or "").strip()
+    if not normalized_path:
+        raise ValueError("content_path is required and cannot be empty")
+    if not _is_likely_image_content_path(normalized_path):
+        raise ValueError(
+            f"content_path '{normalized_path}' does not look like an image path. Pass the image content_path from semantic_search, not a source document path."
+        )
+
+    image = await _download_blob_image(normalized_path)
+    if image is None:
+        raise RuntimeError(
+            f"Unable to download image from content_path '{normalized_path}'. Verify STORAGE_ACCOUNT_BLOB_ENDPOINT and RBAC."
+        )
+
+    return image
 
 
 if __name__ == "__main__":

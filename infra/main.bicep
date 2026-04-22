@@ -113,6 +113,9 @@ param searchSkillsetScriptForceUpdateTag string = newGuid()
 @description('Value used to force the indexer deployment script to rerun on each deployment.')
 param searchIndexerScriptForceUpdateTag string = newGuid()
 
+@description('Whether to run deploymentScripts modules that configure Search data source/index/skillset/indexer. Disable for keyless storage environments where deploymentScripts cannot use key-based storage auth.')
+param enableSearchConfigDeploymentScripts bool = false
+
 var normalizedEnvironmentName = toLower(replace(environmentName, ' ', '-'))
 var finalResourceGroupName = resourceGroupName
 var userAssignedIdentityName = '${normalizedEnvironmentName}-uami'
@@ -280,6 +283,8 @@ module webApp './webApp.bicep' = {
       SEARCH_SERVICE_NAME: searchServiceName
       OPENAI_ACCOUNT_ENDPOINT: openAi.outputs.openAiAccountEndpoint
       OPENAI_EMBEDDINGS_DEPLOYMENT_NAME: openAi.outputs.openAiEmbeddingsDeploymentName
+      STORAGE_ACCOUNT_BLOB_ENDPOINT: storageAccount.outputs.blobEndpoint
+      STORAGE_ACCOUNT_CONTAINER_NAME: storageContainerName
     }
   }
 }
@@ -306,7 +311,18 @@ module searchServiceBlobDataReader 'storageAccountRoleAssignment.bicep' = {
   }
 }
 
-module scriptIdentitySearchContributor './searchServiceRoleAssignment.bicep' = {
+module webAppBlobDataReader 'storageAccountRoleAssignment.bicep' = {
+  name: '${normalizedEnvironmentName}-webapp-blob-reader'
+  scope: rg
+  params: {
+    roleAssignmentName: guid(subscription().id, finalResourceGroupName, storageAccountName, webAppName, 'blob-data-reader')
+    storageAccountName: storageAccountName
+    principalId: webApp.outputs.webAppIdentityPrincipalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
+  }
+}
+
+module scriptIdentitySearchContributor './searchServiceRoleAssignment.bicep' = if (enableSearchConfigDeploymentScripts) {
   name: '${normalizedEnvironmentName}-script-search-contrib'
   scope: rg
   params: {
@@ -317,7 +333,7 @@ module scriptIdentitySearchContributor './searchServiceRoleAssignment.bicep' = {
   }
 }
 
-module createSearchDataSource './createSearchDataSource.bicep' = {
+module createSearchDataSource './createSearchDataSource.bicep' = if (enableSearchConfigDeploymentScripts) {
   name: createSearchDataSourceModuleName
   scope: rg
   params: {
@@ -340,7 +356,7 @@ module createSearchDataSource './createSearchDataSource.bicep' = {
   ]
 }
 
-module createSearchIndex './createSearchIndex.bicep' = {
+module createSearchIndex './createSearchIndex.bicep' = if (enableSearchConfigDeploymentScripts) {
   name: searchIndexModuleName
   scope: rg
   params: {
@@ -375,7 +391,7 @@ module createSearchIndex './createSearchIndex.bicep' = {
   ]
 }
 
-module createSearchSkillset './createSkillset.bicep' = {
+module createSearchSkillset './createSkillset.bicep' = if (enableSearchConfigDeploymentScripts) {
   name: searchSkillsetModuleName
   scope: rg
   params: {
@@ -408,7 +424,7 @@ module createSearchSkillset './createSkillset.bicep' = {
   ]
 }
 
-module createSearchIndexer './createSearchIndexer.bicep' = {
+module createSearchIndexer './createSearchIndexer.bicep' = if (enableSearchConfigDeploymentScripts) {
   name: searchIndexerModuleName
   scope: rg
   params: {

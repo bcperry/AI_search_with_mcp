@@ -10,6 +10,15 @@
     },
     "resourceGroupName": {
       "value": "${AZURE_RESOURCE_GROUP}"
+    },
+    "searchServiceSku": {
+      "value": "${SEARCH_SERVICE_SKU}"
+    },
+    "storageAccountSku": {
+      "value": "${STORAGE_ACCOUNT_SKU}"
+    },
+    "cloudName": {
+      "value": "${CLOUD_NAME}"
     }
   }
 }
