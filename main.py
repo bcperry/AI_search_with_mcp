@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from azure.core.exceptions import HttpResponseError
 from azure.core.credentials import TokenCredential
@@ -20,6 +20,8 @@ from azure.identity import (
     ManagedIdentityCredential,
 )
 from azure.search.documents import SearchClient
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents.indexes.models import SearchFieldDataType
 from azure.search.documents.models import VectorizableTextQuery
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
@@ -138,15 +140,6 @@ mcp = FastMCP("Azure AI Search MCP", auth=_build_auth())
 _ENV_DIRECTORY = Path.cwd() / ".azure"
 _ENV_PREFIX = "avcoe-*"
 _VALID_CONTAINER_NAME_PATTERN = re.compile(r'^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$')
-_SEARCH_SELECT_FIELDS = [
-    "content_id",
-    "text_document_id",
-    "document_title",
-    "image_document_id",
-    "content_text",
-    "content_path",
-]
-_VECTOR_FIELD_CANDIDATES = ["content_embedding", "text_vector"]
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 _BLOB_FALLBACK_SCAN_LIMIT = 2000
 _BLOB_FALLBACK_PAGE_SIZE = 200
@@ -201,39 +194,6 @@ def _sanitize_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
 
         result[output_key] = _make_jsonable(value)
     return result
-
-
-def _get_semantic_configuration_candidates(index_name: str) -> List[Optional[str]]:
-    """Return candidate semantic configuration names for the active index."""
-
-    configured = os.getenv("SEARCH_SEMANTIC_CONFIGURATION_NAME")
-    candidates = [
-        configured,
-        f"{index_name}-semantic-configuration",
-        "multimodal-rag-semantic-configuration",
-        "index-and-vectorize-semantic-configuration",
-    ]
-    seen = set()
-    result: List[Optional[str]] = []
-    for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        result.append(candidate)
-    return result
-
-
-def _extract_unknown_field_name(exc: HttpResponseError) -> Optional[str]:
-    """Extract the field name from common Azure Search unknown-field errors."""
-
-    message = str(exc)
-    match = re.search(r"Unknown field '([^']+)'", message)
-    if match:
-        return match.group(1)
-    match = re.search(r"property named '([^']+)'", message)
-    if match:
-        return match.group(1)
-    return None
 
 
 @lru_cache(maxsize=1)
@@ -483,6 +443,112 @@ def _get_search_client(index_name: Optional[str] = None) -> SearchClient:
     return SearchClient(endpoint=endpoint, index_name=resolved_index, credential=credential, audience=audience)
 
 
+class IndexSchema(NamedTuple):
+    select_fields: List[str]
+    vector_field_name: str
+    semantic_configuration_name: Optional[str]
+
+
+@lru_cache(maxsize=1)
+def _get_search_index_client() -> SearchIndexClient:
+    """Construct a SearchIndexClient for index schema introspection."""
+    _load_environment()
+    endpoint = os.getenv("SEARCH_SERVICE_ENDPOINT")
+    if not endpoint:
+        raise RuntimeError("SEARCH_SERVICE_ENDPOINT is not defined in the environment")
+
+    cloud_name = os.getenv("CLOUD_NAME", "").strip()
+    if cloud_name == "AzureUSGovernment":
+        authority_host = AzureAuthorityHosts.AZURE_GOVERNMENT
+        audience = "https://search.azure.us"
+    else:
+        authority_host = AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+        audience = "https://search.azure.com"
+
+    credential = _build_default_credential(authority_host)
+    return SearchIndexClient(endpoint=endpoint, credential=credential, audience=audience)
+
+
+@lru_cache(maxsize=1)
+def _get_index_schema() -> IndexSchema:
+    """Introspect the search index to discover select fields, vector field, and semantic config.
+
+    Returns a cached IndexSchema. Env overrides take highest priority. Falls back to
+    safe defaults if introspection fails.
+    """
+    index_name = os.getenv("SEARCH_INDEX_NAME", "").strip()
+
+    # --- Env overrides (highest priority) ---
+    env_select = os.getenv("SEARCH_SELECT_FIELDS", "").strip()
+    env_vector = os.getenv("SEARCH_VECTOR_FIELD_NAME", "").strip()
+    env_semantic = os.getenv("SEARCH_SEMANTIC_CONFIGURATION_NAME", "").strip()
+
+    if env_select and env_vector:
+        schema = IndexSchema(
+            select_fields=[f.strip() for f in env_select.split(",") if f.strip()],
+            vector_field_name=env_vector,
+            semantic_configuration_name=env_semantic or None,
+        )
+        logger.info(
+            "Using env-override schema: select_fields=%s, vector_field='%s', semantic_config='%s'",
+            schema.select_fields, schema.vector_field_name, schema.semantic_configuration_name,
+        )
+        return schema
+
+    # --- Introspect index schema ---
+    try:
+        client = _get_search_index_client()
+        index = client.get_index(index_name)
+    except Exception:
+        logger.warning(
+            "Failed to introspect index '%s' – falling back to no $select filter",
+            index_name,
+            exc_info=True,
+        )
+        return IndexSchema(
+            select_fields=[],
+            vector_field_name=env_vector or "text_vector",
+            semantic_configuration_name=env_semantic or None,
+        )
+
+    # Classify fields
+    select_fields: List[str] = []
+    vector_field_name: Optional[str] = None
+    for field in index.fields:
+        is_vector = (
+            getattr(field, "vector_search_dimensions", None) is not None
+            or getattr(field, "vector_search_profile_name", None) is not None
+        )
+        if is_vector:
+            if vector_field_name is None:
+                vector_field_name = field.name
+        elif not getattr(field, "hidden", False) and field.type != SearchFieldDataType.ComplexType:
+            select_fields.append(field.name)
+
+    # Discover semantic configuration
+    semantic_config_name: Optional[str] = None
+    semantic_search_settings = getattr(index, "semantic_search", None)
+    if semantic_search_settings:
+        semantic_config_name = getattr(semantic_search_settings, "default_configuration_name", None)
+        if not semantic_config_name:
+            configs = getattr(semantic_search_settings, "configurations", None) or []
+            if configs:
+                semantic_config_name = configs[0].name
+
+    # Apply partial env overrides
+    schema = IndexSchema(
+        select_fields=[f.strip() for f in env_select.split(",") if f.strip()] if env_select else select_fields,
+        vector_field_name=env_vector or vector_field_name or "text_vector",
+        semantic_configuration_name=env_semantic or semantic_config_name,
+    )
+
+    logger.info(
+        "Introspected index '%s': select_fields=%s, vector_field='%s', semantic_config='%s'",
+        index_name, schema.select_fields, schema.vector_field_name, schema.semantic_configuration_name,
+    )
+    return schema
+
+
 @mcp.tool()
 async def semantic_search(
     query: str,
@@ -506,11 +572,11 @@ async def semantic_search(
         raise ValueError("top must be greater than zero")
 
     client = _get_search_client()
+    schema = _get_index_schema()
     endpoint = os.getenv("SEARCH_SERVICE_ENDPOINT") or ""
     index_name = os.getenv("SEARCH_INDEX_NAME") or ""
-    semantic_configuration_candidates = _get_semantic_configuration_candidates(index_name)
 
-    def _run(vector_field_name: str, semantic_configuration_name: Optional[str]) -> Dict[str, Any]:
+    def _run() -> Dict[str, Any]:
         search_kwargs: Dict[str, Any] = {
             "include_total_count": True,
             "top": top,
@@ -520,16 +586,17 @@ async def semantic_search(
             "query_answer_count": top,
             "query_caption": "extractive",
             "query_caption_highlight_enabled": True,
-            "select": list(_SEARCH_SELECT_FIELDS),
             "vector_queries": [
                 VectorizableTextQuery(
                     text=query,
-                    fields=vector_field_name,
+                    fields=schema.vector_field_name,
                 )
             ],
         }
-        if semantic_configuration_name:
-            search_kwargs["semantic_configuration_name"] = semantic_configuration_name
+        if schema.select_fields:
+            search_kwargs["select"] = list(schema.select_fields)
+        if schema.semantic_configuration_name:
+            search_kwargs["semantic_configuration_name"] = schema.semantic_configuration_name
 
         results = client.search(query, **search_kwargs)
         hits = [_sanitize_search_hit(dict(hit)) for hit in results]
@@ -543,14 +610,14 @@ async def semantic_search(
                 "search": query,
                 "count": True,
                 "queryType": "semantic",
-                "semanticConfiguration": semantic_configuration_name,
+                "semanticConfiguration": schema.semantic_configuration_name,
                 "captions": "extractive",
                 "answers": f"extractive|count-{top}",
-                "select": ",".join(_SEARCH_SELECT_FIELDS),
+                "select": ",".join(schema.select_fields) if schema.select_fields else "*",
                 "vectorQueries": [
                     {
                         "kind": "text",
-                        "fields": vector_field_name,
+                        "fields": schema.vector_field_name,
                         "text": query,
                     }
                 ],
@@ -558,21 +625,11 @@ async def semantic_search(
             "value": hits,
         }
 
-    last_error: Optional[HttpResponseError] = None
-    for semantic_configuration_name in semantic_configuration_candidates:
-        for vector_field_name in _VECTOR_FIELD_CANDIDATES:
-            try:
-                return await asyncio.to_thread(_run, vector_field_name, semantic_configuration_name)
-            except HttpResponseError as exc:
-                last_error = exc
-                unknown_field = _extract_unknown_field_name(exc)
-                if unknown_field and unknown_field in _SEARCH_SELECT_FIELDS:
-                    logger.exception("Required select field missing for query '%s'", query)
-                    raise RuntimeError(f"Search request failed: {str(exc)}") from exc
-                continue
-
-    logger.exception("Search request failed for query '%s'", query)
-    raise RuntimeError(f"Search request failed: {str(last_error)}" if last_error else "Search request failed")
+    try:
+        return await asyncio.to_thread(_run)
+    except HttpResponseError as exc:
+        logger.exception("Search request failed for query '%s'", query)
+        raise RuntimeError(f"Search request failed: {str(exc)}") from exc
 
 
 @mcp.tool(output_schema=None)
@@ -611,6 +668,10 @@ async def get_image_from_content_path(
         )
 
     return image
+
+
+# Eagerly load index schema at startup to surface config errors early
+_get_index_schema()
 
 
 if __name__ == "__main__":
