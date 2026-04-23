@@ -141,6 +141,10 @@ _ENV_DIRECTORY = Path.cwd() / ".azure"
 _ENV_PREFIX = "avcoe-*"
 _VALID_CONTAINER_NAME_PATTERN = re.compile(r'^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$')
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+_NON_IMAGE_EXTENSIONS = {
+    ".pdf", ".docx", ".doc", ".xlsx", ".xls",
+    ".pptx", ".ppt", ".txt", ".csv", ".html", ".htm",
+}
 _BLOB_FALLBACK_SCAN_LIMIT = 2000
 _BLOB_FALLBACK_PAGE_SIZE = 200
 
@@ -273,7 +277,7 @@ def _is_valid_blob_container_name(value: str) -> bool:
 
 
 def _is_likely_image_content_path(value: Optional[str]) -> bool:
-    """Return True when the supplied path looks like an image blob path or URL."""
+    """Return True unless the path has a known non-image document extension."""
     if not value:
         return False
 
@@ -284,7 +288,7 @@ def _is_likely_image_content_path(value: Optional[str]) -> bool:
     parsed = urlparse(normalized_value)
     path_value = parsed.path if parsed.scheme and parsed.netloc else normalized_value
     suffix = Path(path_value).suffix.lower()
-    return suffix in _IMAGE_EXTENSIONS
+    return suffix not in _NON_IMAGE_EXTENSIONS
 
 
 def _iter_limited_blob_names(client: BlobServiceClient, container_name: str):
@@ -346,7 +350,8 @@ async def _download_blob_image(content_path: str) -> Optional[Image]:
 
     normalized_input = unquote((content_path or "").strip())
     if not _is_likely_image_content_path(normalized_input):
-        logger.warning("Rejected non-image content_path: %s", content_path)
+        suffix = Path(urlparse(normalized_input).path).suffix.lower() or Path(normalized_input).suffix.lower()
+        logger.warning("Rejected non-image content_path (extension=%s): %s", suffix, content_path)
         return None
 
     parsed = urlparse(normalized_input)
@@ -354,6 +359,7 @@ async def _download_blob_image(content_path: str) -> Optional[Image]:
     # Accept either a full blob URL or a relative blob path.
     if parsed.scheme and parsed.netloc:
         path_value = parsed.path.lstrip("/")
+        logger.debug("Stripped URL prefix from content_path: %s -> %s", content_path, path_value)
     else:
         path_value = normalized_input.lstrip("/")
 
@@ -638,18 +644,26 @@ async def get_image_from_content_path(
 ) -> Image:
     """Download an image from Azure Blob Storage and return MCP Image content.
 
-    As a general rule, use this tool only with content paths returned by semantic_search, not arbitrary source document paths.
-    Users usually do not want screenshots of text or scanned pages with little visual value. Use this tool when semantic_search
-    describes actual useful or interesting visual content that should be shown directly to the user.
+    IMPORTANT: Only call this tool when a semantic_search result hit contains an explicit
+    'content_path' field. If the search results do NOT include a 'content_path' field in
+    the returned hits, there are no images available to retrieve — do not call this tool.
+
+    Never construct a URL from parent_id, title, chunk_id, or any other field. Only pass
+    the literal content_path value from a search result hit.
+
+    Users usually do not want screenshots of text or scanned pages with little visual
+    value. Use this tool when semantic_search describes actual useful or interesting
+    visual content that should be shown directly to the user.
 
     Args:
-        content_path: Full blob URL or blob path. If the container is omitted, STORAGE_ACCOUNT_CONTAINER_NAME is used.
+        content_path: The content_path value from a semantic_search result hit. Pass
+            the value exactly as it appears in the search result.
 
     Returns:
-        MCP Image content suitable for clients that render image blocks. 
+        MCP Image content suitable for clients that render image blocks.
 
     Raises:
-        ValueError: If content_path is empty.
+        ValueError: If content_path is empty or has a known document extension.
         RuntimeError: If the image cannot be downloaded.
     """
 
@@ -657,8 +671,12 @@ async def get_image_from_content_path(
     if not normalized_path:
         raise ValueError("content_path is required and cannot be empty")
     if not _is_likely_image_content_path(normalized_path):
+        suffix = Path(urlparse(unquote(normalized_path)).path).suffix.lower() or Path(unquote(normalized_path)).suffix.lower()
         raise ValueError(
-            f"content_path '{normalized_path}' does not look like an image path. Pass the image content_path from semantic_search, not a source document path."
+            f"content_path '{normalized_path}' has a document extension ({suffix}). "
+            f"This tool requires the content_path field from a semantic_search result "
+            f"that contains image content. If search results do not include a "
+            f"content_path field, there are no images available to retrieve."
         )
 
     image = await _download_blob_image(normalized_path)

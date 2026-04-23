@@ -1,0 +1,98 @@
+Semantic Search tool call args:
+{
+  "query": "small unmanned aircraft system drone operations visual line of sight image or diagram",
+  "top": 3
+}
+Result:
+{
+  "@odata.context": "https://avcoe-demo-ai-search-mcp-search.search.azure.us/indexes('avcoe-demo-ai-search-mcp-index-and-vectorize')/$metadata#docs(*)",
+  "@odata.count": 930,
+  "@search.answers": [
+    {
+      "score": 0.9850000143051147,
+      "key": "c006393d5c2e_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvYWlzZWFyY2hkYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpJTIwRWRpdGVkJTIwMjUlMjBKdWwlMjAyNC5kb2N40_pages_24",
+      "text": "Takeoff Weight, Operational Altitudes, Max Aircraft Speeds. Future DoD UAS Classifications based on: Mission Requirements, UAS Type/Design, Usage. Slide – Unmanned Aircraft Systems by echelon: Platoon Level: Provides the small unit organic capability to perform Beyond Visual Line-Of-Sight (BLOS) RSTA with payloads such as Full Motion Video. Exce...",
+      "highlights": "Takeoff Weight, Operational Altitudes, Max Aircraft Speeds. Future DoD UAS Classifications based on: Mission Requirements, UAS Type/Design, Usage. Slide –<em> Unmanned Aircraft Systems by echelon: Platoon </em>Level: Provides the<em> small unit </em>organic<em> capability </em>to<em> perform Beyond Visual Line-Of-Sight (BLOS) RSTA </em>with<em> payloads </em>such<em> as Full Motion Video.</em> Exce..."
+    },
+    {
+      "score": 0.9850000143051147,
+      "key": "93417fb23a14_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvYWlzZWFyY2hkYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpLnBkZg2_pages_23",
+      "text": "Payload N/A.      Slide – DoD UAS Classification: This video illustrates an example of the nano/micro class of UAS. Slide – Unmanned Aircraft Systems by echelon: Platoon Level: Provides the small unit organic capability to perform   Beyond Visual Line-Of-Sight (BLOS) RSTA with payloads such as Full Motion Video. Exceptionally small form factor, ...",
+      "highlights": "Payload N/A.      Slide – DoD UAS Classification: This video illustrates an example of the nano/micro class of UAS. Slide –<em> Unmanned Aircraft Systems </em>by echelon:<em> Platoon </em>Level: Provides the<em> small </em>unit organic capability to perform   Beyond<em> Visual Line-Of-Sight (BLOS) </em>RSTA with payloads such as Full Motion Video. Exceptionally small form factor, ..."
+    },
+    {
+      "score": 0.9490000009536743,
+      "key": "59ecf720645f_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvYWlzZWFyY2hkYXRhLzAxMS1XU0gzMDI2TCUyMCUyME1pc3Npb24lMjBQbGFubmluZyUyMCgwOCUyME1hciUyMDIxKS5wZGY1_pages_5",
+      "text": "INTRODUCTION  Method of Instruction: Discussion (Small or Large Group)  Mode of Delivery: Resident Instruction  Instr Type (I:S Ratio): Military - ICH (1:12)  Time of Instruction: 10 mins  Motivator Shadow Unmanned aircraft systems (UAS) currently provide the battlefield commander \"near-real-time” imagery  information from over the horizon and a...",
+      "highlights": "INTRODUCTION  Method of Instruction: Discussion (Small or Large Group)  Mode of Delivery: Resident Instruction  Instr Type (I:S Ratio): Military - ICH (1:12)  Time of Instruction: 10 mins  Motivator Shadow Unmanned aircraft systems (UAS) currently provide the<em> battlefield commander \"near-real-time” imagery  information </em>from over the horizon and a..."
+    }
+  ],
+  "@search.nextPageParameters": {
+    "search": "small unmanned aircraft system drone operations visual line of sight image or diagram",
+    "count": true,
+    "queryType": "semantic",
+    "semanticConfiguration": null,
+    "captions": "extractive",
+    "answers": "extractive|count-3",
+    "select": "*",
+    "vectorQueries": [
+      {
+        "kind": "text",
+        "fields": "text_vector",
+        "text": "small unmanned aircraft system drone operations visual line of sight image or diagram"
+      }
+    ]
+  },
+  "value": [
+    {
+      "chunk_id": "c006393d5c2e_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvYWlzZWFyY2hkYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpJTIwRWRpdGVkJTIwMjUlMjBKdWwlMjAyNC5kb2N40_pages_24",
+      "chunk": "Takeoff Weight, Operational Altitudes, Max Aircraft Speeds. Future DoD UAS Classifications based on: Mission Requirements, UAS Type/Design, Usage.\n\nSlide – Proposed Future DoD UAS Classifications: This slide illustrates the Army’s Future UAS classifications from the soldier borne SRR to the long-range group 4/5 systems. Emphasize the Army’s switch from legacy group classifications based on weight/size to mission based classification. This slide illustrates largest on top to smallest on bottom.\n\nSlide – Unmanned Aircraft Systems by echelon: Platoon Level: Provides the small unit organic capability to perform Beyond Visual Line-Of-Sight (BLOS) RSTA with payloads such as Full Motion Video. Exceptionally small form factor, intuitive operation; minimal training, “over the wall/around the corner” employment. Soldier Borne Sensor (SBS), Short Range Reconnaissance (SRR), Black Hornet.\n\nSlide – Unmanned Aircraft Systems by echelon: Company Level: Organic airborne ISR system providing day/night situational awareness to maneuver elements. Recon and security, counter rocket and mortar. Medium Range Mobile (MRM), Raven.\n\nSlide – Unmanned Aircraft Systems by echelon: Battalion Level: Organic airborne ISR providing day/night situational awareness to maneuver commanders. Recon and security, counter rocket and mortar, long endurance surveillance. Long Range Reconnaissance, Surveillance (LRRS) Puma.\n\nSlide – Small UAS Unit Organizational Classifications: Brigade Level: Organic small form factor sensor providing real time surveillance and situational awareness support to maneuver squads. Recon and security, persistent surveillance (Hover/Perch and Stare), IED interrogation, Loiter/may be weaponized. Launched Effects Short Range, RQ-28A.\n\nSlide – Unmanned Aircraft Systems by echelon: Brigade Level: Organic airborne ISR providing day/night situational awareness to maneuver commanders. Recon and security, counter rocket and mortar, long endurance surveillance, VTOL Capability.",
+      "parent_id": "aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvYWlzZWFyY2hkYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpJTIwRWRpdGVkJTIwMjUlMjBKdWwlMjAyNC5kb2N40",
+      "title": "011-WSH3001L  Introduction to UAS (08 May 24) Edited 25 Jul 24.docx",
+      "@search.score": 0.03009207174181938,
+      "@search.rerankerScore": 2.523019313812256,
+      "@search.highlights": null,
+      "@search.captions": [
+        {
+          "text": "Takeoff Weight, Operational Altitudes, Max Aircraft Speeds. Future DoD UAS Classifications based on: Mission Requirements, UAS Type/Design, Usage. Slide – Proposed Future DoD UAS Classificati... Slide – Unmanned Aircraft Systems by echelon: Platoon Level: Provides the small unit organic capability to perform Beyond Visual Line-Of-Sight (BLOS) RSTA.",
+          "highlights": "Takeoff Weight, Operational Altitudes, Max Aircraft Speeds. Future DoD UAS Classifications based on: Mission Requirements, UAS Type/Design, Usage. Slide – Proposed Future DoD UAS Classificati... Slide –<em> Unmanned Aircraft Systems by echelon: Platoon </em>Level: Provides the<em> small unit </em>organic<em> capability </em>to<em> perform Beyond Visual Line-Of-Sight (BLOS) RSTA.</em>"
+        }
+      ]
+    },
+    {
+      "chunk_id": "93417fb23a14_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvYWlzZWFyY2hkYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpLnBkZg2_pages_23",
+      "chunk": "Payload N/A. \n\n \n\nSlide – DoD UAS Classification: This video illustrates an example of the nano/micro class of UAS. \n\nInstructor Note: Lead a discussion of the benefits/drawbacks of this type of platform in combat. \n\n \n\nGroup 1 C A RQ-20 Puma \n\nGroup 2 A B MQ-1C Gray Eagle \n\nGroup 3 D C RQ-28 Quadcopter \n\nGroup 4 B D RQ-7Bv2 Shadow \n\n\n\n17 \nUNCLASSIFIED//CAC-T//FOR OFFICIAL USE ONLY \n\nSlide – Proposed Future DoD UAS Classifications: Legacy classifications based on: Max Gross Takeoff Weight, \n\nOperational Altitudes, Max Aircraft Speeds. Future DoD UAS Classifications based on: Mission Requirements, UAS \n\nType/Design, Usage. \n\n \n\nSlide – Proposed Future DoD UAS Classifications: This slide illustrates the Army’s Future UAS classifications from the \n\nsoldier borne SRR to the long-range group 4/5 systems. Emphasize the Army’s switch from legacy group classifications \n\nbased on weight/size to mission based classification. This slide illustrates largest on top to smallest on bottom. \n\n \n\nSlide – Unmanned Aircraft Systems by echelon: Platoon Level: Provides the small unit organic capability to perform \n\nBeyond Visual Line-Of-Sight (BLOS) RSTA with payloads such as Full Motion Video. Exceptionally small form factor, \n\nintuitive operation; minimal training, “over the wall/around the corner” employment. Soldier Borne Sensor (SBS), Short \n\nRange Reconnaissance (SRR), Black Hornet. \n\n \n\nSlide – Unmanned Aircraft Systems by echelon: Company Level: Organic airborne ISR system providing day/night \n\nsituational awareness to maneuver elements. Recon and security, counter rocket and mortar. Medium Range Mobile \n\n(MRM), Raven. \n\n \n\nSlide – Unmanned Aircraft Systems by echelon: Battalion Level: Organic airborne ISR providing day/night situational \n\nawareness to maneuver commanders. Recon and security, counter rocket and mortar, long endurance surveillance. Long \n\nRange Reconnaissance, Surveillance (LRRS) Puma.",
+      "parent_id": "aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvYWlzZWFyY2hkYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpLnBkZg2",
+      "title": "011-WSH3001L  Introduction to UAS (08 May 24).pdf",
+      "@search.score": 0.028324153274297714,
+      "@search.rerankerScore": 2.4471628665924072,
+      "@search.highlights": null,
+      "@search.captions": [
+        {
+          "text": "Payload N/A.      Slide – DoD UAS Classification: This video illustrates an example of the nano/micro class of UAS. Instructor... This slide illustrates largest on top to smallest on bottom. Slide – Unmanned Aircraft Systems by echelon: Platoon Level: Provides the small unit organic capability to perform   Beyond Visual Line-Of-Sight (BLOS) RSTA.",
+          "highlights": "Payload N/A.      Slide – DoD UAS Classification: This video illustrates an example of the nano/micro class of UAS. Instructor... This slide illustrates largest on top to smallest on bottom. Slide –<em> Unmanned Aircraft Systems </em>by echelon:<em> Platoon </em>Level: Provides the<em> small </em>unit organic capability to perform   Beyond<em> Visual Line-Of-Sight (BLOS) </em>RSTA."
+        }
+      ]
+    },
+    {
+      "chunk_id": "c006393d5c2e_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvYWlzZWFyY2hkYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpJTIwRWRpdGVkJTIwMjUlMjBKdWwlMjAyNC5kb2N40_pages_54",
+      "chunk": "Slide – Aircraft. 16. EO Sensor, 17. IR Sensor, 18. Sensor Tilt Motor, 19. Sensor Roll Motor, 20. Cooling Inlet, 21. Data Label. \n\nSlide – Payloads. Can consist of aerial imaging equipment such as: Drone Cameras, SAR – Synthetic Aperture RADAR, and Gyro-Stabilized Gimbals. Small UAS can be equipped with modular payload systems capable of carrying a wide variety of plug-and-play sensors. Some payloads can be switched in and out based on mission requirements – (METT-TC).\n\nSlide – Payload Bay. The RQ-28A payload bay interface is located on the top of the drone and consists of an indented area with recessed USB-C electrical interface receptacle, weatherproof cover, and recessed mounting nuts. The payload bay is designed to accommodate third-party payloads with the following limitations: Max Dimensions- 1.75” (L) X 1” (H) X 2” (W), Max Weight- 200 grams, Max Power- 14w.\n\nSlide – Cameras. Imaging Sensors: 4k Color Camera: The RQ-28A is equipped with a high-resolution 4k color camera, allowing it to capture detailed visual information during reconnaissance missions. FLIR (Forward-Looking Infrared) Camera: Additionally, it features a FLIR thermal camera for enhanced imaging capabilities in both day and night scenarios. The FLIR camera provides accurate radiometric readings, making it valuable for various applications.\n1. Enhanced Imaging Capability: The FLIR Boson thermal camera provides enhanced quality imaging in both day and night scenarios. It operates in the long-wave infrared (LWIR) spectrum, allowing it to detect thermal signatures even in low-light conditions. This capability is crucial for reconnaissance, surveillance, and situational awareness.\n2. Radiometric Readings: The FLIR camera not only captures visual imagery, but also provides radiometric readings. Radiometry allows precise temperature measurements of objects within the camera’s field of view.",
+      "parent_id": "aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvYWlzZWFyY2hkYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpJTIwRWRpdGVkJTIwMjUlMjBKdWwlMjAyNC5kb2N40",
+      "title": "011-WSH3001L  Introduction to UAS (08 May 24) Edited 25 Jul 24.docx",
+      "@search.score": 0.0205366350710392,
+      "@search.rerankerScore": 2.366166591644287,
+      "@search.highlights": null,
+      "@search.captions": [
+        {
+          "text": "Can consist of aerial imaging equipment such as: Drone Cameras, SAR – Synthetic Aperture RADAR, and Gyro-Stabilized Gimbals. Small UAS can be equipped with modular payload systems capable of carrying a wide variet... Imaging Sensors: 4k Color Camera: The RQ-28A is equipped with a high-resolution 4k color camera, allowing it to capture detailed.",
+          "highlights": "Can consist of<em> aerial imaging equipment </em>such as:<em> Drone Cameras, </em>SAR – Synthetic Aperture RADAR, and Gyro-Stabilized Gimbals. Small UAS can be equipped with modular payload systems capable of carrying a wide variet... Imaging Sensors:<em> 4k Color Camera: </em>The RQ-28A is equipped with a high-resolution 4k color<em> camera, </em>allowing it to capture detailed."
+        }
+      ]
+    }
+  ]
+}
+
+Get image tool call args:
+{
+  "content_path": "https://avcoedemoaisearchmcpstg.blob.core.windows.net/avcoe-demo-ai-search-mcp-container/011-WSH3001L%20%20Introduction%20to%20UAS%20(08%20May%2024).pdf"
+}
