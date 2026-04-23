@@ -68,18 +68,69 @@ def _build_default_credential(authority_host: str) -> TokenCredential:
 _apply_cloud_authority_from_env()
 
 
+def _get_azure_ad_login_host() -> str:
+    """Return the Azure AD login host based on CLOUD_NAME."""
+    cloud_name = os.getenv("CLOUD_NAME", "").strip()
+    if cloud_name == "AzureUSGovernment":
+        return "login.microsoftonline.us"
+    return "login.microsoftonline.com"
+
+
 def _build_auth() -> Optional[JWTVerifier]:
-    """Return a JWTVerifier when MCP_AUTH_SECRET is set, otherwise None (no auth)."""
+    """Return a JWTVerifier based on auth configuration priority.
+
+    Priority:
+    1. AZURE_AD_REQUIRE_AUTH=true  → Azure AD JWKS (RS256)
+    2. MCP_AUTH_SECRET set         → symmetric HS256 (existing behavior)
+    3. Neither                     → None (no auth)
+    """
+    # --- Azure AD JWKS-based auth (RS256) ---
+    require_aad = os.getenv("AZURE_AD_REQUIRE_AUTH", "false").strip().lower() == "true"
+    if require_aad:
+        tenant_id = os.getenv("AZURE_AD_TENANT_ID", "").strip()
+        client_id = os.getenv("AZURE_AD_CLIENT_ID", "").strip()
+        if not tenant_id:
+            raise RuntimeError(
+                "AZURE_AD_REQUIRE_AUTH is true but AZURE_AD_TENANT_ID is not set"
+            )
+        if not client_id:
+            raise RuntimeError(
+                "AZURE_AD_REQUIRE_AUTH is true but AZURE_AD_CLIENT_ID is not set"
+            )
+        login_host = _get_azure_ad_login_host()
+        issuer = f"https://{login_host}/{tenant_id}/v2.0"
+        jwks_uri = f"https://{login_host}/{tenant_id}/discovery/v2.0/keys"
+        custom_audience = os.getenv("AZURE_AD_AUDIENCE", "").strip()
+        audience: str | list[str] = (
+            custom_audience if custom_audience
+            else [client_id, f"api://{client_id}"]
+        )
+        logger.info(
+            "Azure AD auth enabled – issuer=%s, audience=%s",
+            issuer,
+            audience,
+        )
+        return JWTVerifier(
+            jwks_uri=jwks_uri,
+            issuer=issuer,
+            audience=audience,
+            algorithm="RS256",
+        )
+
+    # --- Existing symmetric-key auth (HS256) ---
     secret = os.getenv("MCP_AUTH_SECRET")
-    if not secret:
-        logger.warning("MCP_AUTH_SECRET is not set – running WITHOUT authentication")
-        return None
-    return JWTVerifier(
-        public_key=secret,
-        algorithm="HS256",
-        issuer=os.getenv("MCP_AUTH_ISSUER", "mcp-issuer"),
-        audience=os.getenv("MCP_AUTH_AUDIENCE", "azure-ai-search-mcp"),
-    )
+    if secret:
+        logger.info("MCP_AUTH_SECRET auth enabled (HS256)")
+        return JWTVerifier(
+            public_key=secret,
+            algorithm="HS256",
+            issuer=os.getenv("MCP_AUTH_ISSUER", "mcp-issuer"),
+            audience=os.getenv("MCP_AUTH_AUDIENCE", "azure-ai-search-mcp"),
+        )
+
+    # --- No auth ---
+    logger.warning("No authentication configured – running WITHOUT authentication")
+    return None
 
 
 mcp = FastMCP("Azure AI Search MCP", auth=_build_auth())
