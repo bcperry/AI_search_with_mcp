@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/001-aad-token-auth-mcp/plan.md
+at specs/002-fix-search-select-fields/plan.md
 <!-- SPECKIT END -->
