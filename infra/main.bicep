@@ -116,6 +116,15 @@ param searchIndexerScriptForceUpdateTag string = newGuid()
 @description('Whether to run deploymentScripts modules that configure Search data source/index/skillset/indexer. Disable for keyless storage environments where deploymentScripts cannot use key-based storage auth.')
 param enableSearchConfigDeploymentScripts bool = false
 
+@description('Enable Azure AD token validation on the MCP server (true/false).')
+param azureAdRequireAuth string = 'false'
+
+@description('Azure AD tenant ID for MCP server token validation.')
+param azureAdTenantId string = ''
+
+@description('Azure AD app registration client ID for MCP server token validation (expected audience).')
+param azureAdClientId string = ''
+
 var normalizedEnvironmentName = toLower(replace(environmentName, ' ', '-'))
 var finalResourceGroupName = resourceGroupName
 var userAssignedIdentityName = '${normalizedEnvironmentName}-uami'
@@ -285,6 +294,9 @@ module webApp './webApp.bicep' = {
       OPENAI_EMBEDDINGS_DEPLOYMENT_NAME: openAi.outputs.openAiEmbeddingsDeploymentName
       STORAGE_ACCOUNT_BLOB_ENDPOINT: storageAccount.outputs.blobEndpoint
       STORAGE_ACCOUNT_CONTAINER_NAME: storageContainerName
+      AZURE_AD_REQUIRE_AUTH: azureAdRequireAuth
+      AZURE_AD_TENANT_ID: azureAdTenantId
+      AZURE_AD_CLIENT_ID: azureAdClientId
     }
   }
 }

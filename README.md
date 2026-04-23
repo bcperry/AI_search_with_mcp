@@ -66,6 +66,65 @@ Use these values in application configuration or automation steps that consume t
 
 The templates automatically grant the Azure AI Search service's system-assigned managed identity the **Cognitive Services OpenAI Contributor** role over the Azure OpenAI account. This permission is required for Entra ID-based access from Azure AI Search to both the GPT-4o and embeddings deployments. If additional workloads need access, assign the appropriate Azure OpenAI role (for example, **Cognitive Services OpenAI User**) to their managed identities at the OpenAI account scope.
 
+## Authentication
+
+The MCP server supports Azure AD (Microsoft Entra ID) bearer token authentication on its HTTP transport endpoint. Authentication is optional and controlled via environment variables.
+
+### Auth Priority
+
+The server evaluates authentication configuration in this order:
+
+1. **Azure AD (RS256 JWKS)** — when `AZURE_AD_REQUIRE_AUTH=true`
+2. **Symmetric key (HS256)** — when `MCP_AUTH_SECRET` is set
+3. **No auth** — when neither is configured (local development only)
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `AZURE_AD_REQUIRE_AUTH` | No | `false` | Set to `true` to enable Azure AD token validation |
+| `AZURE_AD_TENANT_ID` | When auth enabled | — | Azure AD tenant ID |
+| `AZURE_AD_CLIENT_ID` | When auth enabled | — | MCP server's app registration client ID (Application ID) |
+| `CLOUD_NAME` | No | — | Set to `AzureUSGovernment` for Azure Government; omit for commercial cloud |
+| `MCP_AUTH_SECRET` | No | — | Shared secret for HS256 JWT auth (fallback) |
+| `MCP_AUTH_ISSUER` | No | `mcp-issuer` | Expected JWT issuer for HS256 auth |
+| `MCP_AUTH_AUDIENCE` | No | `azure-ai-search-mcp` | Expected JWT audience for HS256 auth |
+
+### Azure AD App Registration Setup
+
+1. **Register the MCP server app** in Azure AD:
+   - Azure Portal → Azure Active Directory → App registrations → New registration
+   - Name: `mcp-azure-ai-search` (or your preferred name)
+   - Supported account types: Single tenant
+   - No redirect URI needed (server-only)
+
+2. **Expose an API**:
+   - App registrations → your app → Expose an API
+   - Set Application ID URI: `api://<client-id>`
+   - Add a scope: `api://<client-id>/.default`
+
+3. **Grant calling application permission**:
+   - The calling backend's app registration needs API permissions → Add a permission → My APIs → select the MCP server app → select the `.default` scope
+   - Grant admin consent
+
+4. **Configure deployment environment**:
+   ```env
+   AZURE_AD_REQUIRE_AUTH=true
+   AZURE_AD_TENANT_ID=<your-tenant-id>
+   AZURE_AD_CLIENT_ID=<your-mcp-app-client-id>
+   CLOUD_NAME=AzureUSGovernment   # omit for commercial cloud
+   ```
+
+### Verifying Auth
+
+When Azure AD auth is enabled, the server logs at startup:
+
+```
+INFO: Azure AD auth enabled – issuer=https://login.microsoftonline.us/<tenant>/v2.0, audience=api://<client-id>
+```
+
+Requests without a valid `Authorization: Bearer <token>` header receive HTTP 401.
+
 ## Manual validation with `az rest`
 
 If you need to validate the index, skillset, or indexer definitions outside of an `azd` deployment, the repository includes ready-to-send payloads (`index-test.json`, `skillset-test.json`, and `indexer-test.json`). Update the placeholder values (for example, the OpenAI resource URI) and run the following from PowerShell:

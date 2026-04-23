@@ -19,6 +19,15 @@
     },
     "cloudName": {
       "value": "${CLOUD_NAME}"
+    },
+    "azureAdRequireAuth": {
+      "value": "${AZURE_AD_REQUIRE_AUTH}"
+    },
+    "azureAdTenantId": {
+      "value": "${AZURE_AD_TENANT_ID}"
+    },
+    "azureAdClientId": {
+      "value": "${AZURE_AD_CLIENT_ID}"
     }
   }
 }
