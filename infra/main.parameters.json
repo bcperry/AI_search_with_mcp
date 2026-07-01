@@ -20,6 +20,12 @@
     "cloudName": {
       "value": "${CLOUD_NAME}"
     },
+    "openAiEmbeddingsDeploymentCapacity": {
+      "value": "${AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT_CAPACITY=200}"
+    },
+    "enableSearchConfigDeploymentScripts": {
+      "value": "${ENABLE_SEARCH_CONFIG_DEPLOYMENT_SCRIPTS=false}"
+    },
     "azureAdRequireAuth": {
       "value": "${AZURE_AD_REQUIRE_AUTH}"
     },

@@ -80,16 +80,6 @@ param webAppAlwaysOn bool = true
 ])
 param cloudName string
 
-@description('Model identifier to deploy to Azure AI Foundry.')
-param openAiModelName string = 'gpt-4o'
-
-@description('Model version for the Azure AI Foundry deployment.')
-param openAiModelVersion string = '2024-11-20'
-
-@description('Throughput units for the Azure AI Foundry deployment.')
-@minValue(1)
-param openAiDeploymentCapacity int = 10
-
 @description('Embeddings model identifier to deploy to Azure AI Foundry.')
 param openAiEmbeddingsModelName string = 'text-embedding-ada-002'
 
@@ -113,7 +103,7 @@ param searchSkillsetScriptForceUpdateTag string = newGuid()
 @description('Value used to force the indexer deployment script to rerun on each deployment.')
 param searchIndexerScriptForceUpdateTag string = newGuid()
 
-@description('Whether to run deploymentScripts modules that configure Search data source/index/skillset/indexer. Disable for keyless storage environments where deploymentScripts cannot use key-based storage auth.')
+@description('Whether to run deploymentScripts modules that configure Search data source/index/skillset/indexer.')
 param enableSearchConfigDeploymentScripts bool = false
 
 @description('Enable Azure AD token validation on the MCP server (true/false).')
@@ -145,6 +135,7 @@ var searchIndexChunkKeyFieldName = 'chunk_id'
 var searchIndexParentKeyFieldName = 'parent_id'
 var searchIndexChunkFieldName = 'chunk'
 var searchIndexTitleFieldName = 'title'
+var searchIndexSourcePathFieldName = 'source_path'
 var searchIndexVectorFieldName = 'text_vector'
 var searchIndexSemanticConfigurationName = 'index-and-vectorize-semantic-configuration'
 var searchIndexVectorAlgorithmName = 'index-and-vectorize-algorithm'
@@ -177,7 +168,6 @@ var openAiSubdomainBase = replace(openAiAccountBaseName, '-', '')
 var openAiSubdomainBaseClean = length(openAiSubdomainBase) > 0 ? openAiSubdomainBase : 'aoai'
 var openAiSubdomainWithSuffix = '${openAiSubdomainBaseClean}aoai'
 var openAiCustomSubDomainName = length(openAiSubdomainWithSuffix) > 30 ? substring(openAiSubdomainWithSuffix, 0, 30) : openAiSubdomainWithSuffix
-var openAiDeploymentName = openAiModelName
 var openAiEmbeddingsDeploymentName = openAiEmbeddingsModelName
 var openAiRoleAssignmentModuleName = '${normalizedEnvironmentName}-aoai-role'
 var openAiContributorRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a001fd3d-188f-4b5d-821b-7da978bf7442')
@@ -245,10 +235,6 @@ module openAi './azureOpenAi.bicep' = {
     tags: {
       'azd-env-name': environmentName
     }
-    deploymentName: openAiDeploymentName
-    modelName: openAiModelName
-    modelVersion: openAiModelVersion
-    capacity: openAiDeploymentCapacity
     embeddingsDeploymentName: openAiEmbeddingsDeploymentName
     embeddingsModelName: openAiEmbeddingsModelName
     embeddingsModelVersion: openAiEmbeddingsModelVersion
@@ -397,6 +383,7 @@ module createSearchIndex './createSearchIndex.bicep' = if (enableSearchConfigDep
     vectorFieldName: searchIndexVectorFieldName
     chunkFieldName: searchIndexChunkFieldName
     titleFieldName: searchIndexTitleFieldName
+    sourcePathFieldName: searchIndexSourcePathFieldName
     chunkKeyFieldName: searchIndexChunkKeyFieldName
     parentKeyFieldName: searchIndexParentKeyFieldName
     semanticConfigurationName: searchIndexSemanticConfigurationName
@@ -404,8 +391,8 @@ module createSearchIndex './createSearchIndex.bicep' = if (enableSearchConfigDep
     vectorSearchProfileName: searchIndexVectorProfileName
     vectorSearchVectorizerName: searchIndexVectorizerName
     openAiResourceUri: openAi.outputs.openAiAccountEndpoint
-    openAiDeploymentId: openAi.outputs.openAiEmbeddingsDeploymentName
-    openAiModelName: openAi.outputs.openAiEmbeddingsDeploymentModel
+    openAiEmbeddingsDeploymentId: openAi.outputs.openAiEmbeddingsDeploymentName
+    openAiEmbeddingsModelName: openAi.outputs.openAiEmbeddingsDeploymentModel
     forceUpdateTag: searchIndexScriptForceUpdateTag
   }
   dependsOn: [
@@ -429,14 +416,15 @@ module createSearchSkillset './createSkillset.bicep' = if (enableSearchConfigDep
     subscriptionId: subscription().subscriptionId
     tenantId: subscription().tenantId
     openAiResourceUri: openAi.outputs.openAiAccountEndpoint
-    openAiDeploymentId: openAi.outputs.openAiEmbeddingsDeploymentName
-    openAiModelName: openAi.outputs.openAiEmbeddingsDeploymentModel
+    openAiEmbeddingsDeploymentId: openAi.outputs.openAiEmbeddingsDeploymentName
+    openAiEmbeddingsModelName: openAi.outputs.openAiEmbeddingsDeploymentModel
     openAiEmbeddingDimensions: openAiEmbeddingsDimensions
     targetIndexName: searchTargetIndexName
     parentKeyFieldName: searchIndexParentKeyFieldName
     vectorFieldName: searchIndexVectorFieldName
     chunkFieldName: searchIndexChunkFieldName
     titleFieldName: searchIndexTitleFieldName
+    sourcePathFieldName: searchIndexSourcePathFieldName
     forceUpdateTag: searchSkillsetScriptForceUpdateTag
   }
   dependsOn: [
@@ -488,12 +476,10 @@ output CLOUD_NAME string = cloudName
 output OPENAI_ACCOUNT_ID string = openAi.outputs.openAiAccountId
 output OPENAI_ACCOUNT_NAME string = openAi.outputs.openAiAccountName
 output OPENAI_ACCOUNT_ENDPOINT string = openAi.outputs.openAiAccountEndpoint
-output OPENAI_DEPLOYMENT_ID string = openAi.outputs.openAiDeploymentId
-output OPENAI_DEPLOYMENT_NAME string = openAi.outputs.openAiDeploymentName
-output OPENAI_DEPLOYMENT_MODEL string = openAi.outputs.openAiDeploymentModel
 output OPENAI_EMBEDDINGS_DEPLOYMENT_ID string = openAi.outputs.openAiEmbeddingsDeploymentId
 output OPENAI_EMBEDDINGS_DEPLOYMENT_NAME string = openAi.outputs.openAiEmbeddingsDeploymentName
 output OPENAI_EMBEDDINGS_DEPLOYMENT_MODEL string = openAi.outputs.openAiEmbeddingsDeploymentModel
+output OPENAI_EMBEDDINGS_DIMENSIONS string = string(openAiEmbeddingsDimensions)
 output STORAGE_ACCOUNT_ID string = storageAccount.outputs.storageAccountId
 output STORAGE_ACCOUNT_NAME string = storageAccountName
 output STORAGE_ACCOUNT_BLOB_ENDPOINT string = storageAccount.outputs.blobEndpoint
@@ -503,6 +489,8 @@ output STORAGE_ACCOUNT_FILE_ENDPOINT string = storageAccount.outputs.fileEndpoin
 output STORAGE_ACCOUNT_CONTAINER_NAME string = storageContainerName
 output SEARCH_DATA_SOURCE_NAME string = searchDataSourceName
 output SEARCH_INDEX_NAME string = searchTargetIndexName
+output SEARCH_SKILLSET_NAME string = searchSkillsetName
+output SEARCH_INDEXER_NAME string = searchIndexerName
 output WEB_APP_ID string = webApp.outputs.webAppId
 output WEB_APP_NAME string = webAppName
 output WEB_APP_DEFAULT_HOST_NAME string = webApp.outputs.webAppDefaultHostName

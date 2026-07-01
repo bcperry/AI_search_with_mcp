@@ -115,7 +115,7 @@ if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
   az account set --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null
 fi
 
-    API_VERSION="2020-06-30"
+  API_VERSION="2026-04-01"
 ADMIN_KEY=$(az search admin-key show --resource-group "$RESOURCE_GROUP_NAME" --service-name "$SEARCH_SERVICE_NAME" --query primaryKey -o tsv)
 
 if [[ -z "$ADMIN_KEY" ]]; then

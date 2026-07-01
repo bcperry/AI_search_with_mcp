@@ -13,3 +13,5 @@ wheels/
 
 # Environment files
 .env
+
+docs/*

@@ -25,19 +25,6 @@ param tags object = {}
 ])
 param publicNetworkAccess string = 'Enabled'
 
-@description('Name of the deployment to provision within the Azure AI Foundry account.')
-param deploymentName string
-
-@description('Model name for the deployment (e.g., gpt-4o).')
-param modelName string
-
-@description('Model version to deploy.')
-param modelVersion string
-
-@description('Manual scale capacity (throughput units) for the deployment.')
-@minValue(1)
-param capacity int = 1
-
 @description('Name of the embeddings deployment to provision within the Azure AI Foundry account.')
 param embeddingsDeploymentName string
 
@@ -65,23 +52,6 @@ resource openAiAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
   tags: tags
 }
 
-resource openAiDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-05-01' = {
-  name: deploymentName
-  parent: openAiAccount
-  properties: {
-    model: {
-      name: modelName
-      format: 'OpenAI'
-      version: modelVersion
-    }
-    raiPolicyName: ''
-  }
-  sku: {
-    name: 'Standard'
-    capacity: capacity
-  }
-}
-
 resource openAiEmbeddingsDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-05-01' = {
   name: embeddingsDeploymentName
   parent: openAiAccount
@@ -102,9 +72,6 @@ resource openAiEmbeddingsDeployment 'Microsoft.CognitiveServices/accounts/deploy
 output openAiAccountId string = openAiAccount.id
 output openAiAccountEndpoint string = openAiAccount.properties.endpoint
 output openAiAccountName string = openAiAccount.name
-output openAiDeploymentId string = openAiDeployment.id
-output openAiDeploymentName string = deploymentName
-output openAiDeploymentModel string = modelName
 output openAiEmbeddingsDeploymentId string = openAiEmbeddingsDeployment.id
 output openAiEmbeddingsDeploymentName string = embeddingsDeploymentName
 output openAiEmbeddingsDeploymentModel string = embeddingsModelName

@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from fastmcp.utilities.types import Image
+import uvicorn
 
 logger = logging.getLogger(__name__)
 
@@ -692,5 +693,23 @@ async def get_image_from_content_path(
 _get_index_schema()
 
 
+class McpPathCompatibilityApp:
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") == "http" and scope.get("path") == "/mcp":
+            scope = dict(scope)
+            scope["path"] = "/mcp/"
+        await self.app(scope, receive, send)
+
+
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
+    app = mcp.http_app(path="/mcp/", transport="streamable-http")
+    uvicorn.run(
+        McpPathCompatibilityApp(app),
+        host="0.0.0.0",
+        port=8000,
+        lifespan="on",
+        timeout_graceful_shutdown=0,
+    )

@@ -66,6 +66,9 @@ param pageSourceContext string = '/document/pages/*'
 @description('Path to the document title field.')
 param titleSourcePath string = '/document/title'
 
+@description('Path to the source blob URI field.')
+param sourcePathSourcePath string = '/document/metadata_storage_path'
+
 @description('Name assigned to the split skill within the skillset.')
 param splitSkillName string = 'splitSkill'
 
@@ -78,11 +81,11 @@ param splitSkillOutputTargetName string = 'pages'
 @description('Azure OpenAI resource URI to use for embeddings (e.g. https://<resource>.openai.azure.com).')
 param openAiResourceUri string
 
-@description('Azure OpenAI deployment identifier providing embeddings.')
-param openAiDeploymentId string
+@description('Azure OpenAI embeddings deployment identifier.')
+param openAiEmbeddingsDeploymentId string
 
 @description('Azure OpenAI model name used for embeddings.')
-param openAiModelName string
+param openAiEmbeddingsModelName string
 
 @description('Dimensionality of the embedding vector returned by the Azure OpenAI deployment.')
 @minValue(1)
@@ -102,6 +105,9 @@ param chunkFieldName string = 'chunk'
 
 @description('Name of the title field on the target index.')
 param titleFieldName string = 'title'
+
+@description('Name of the source path field on the target index.')
+param sourcePathFieldName string = 'source_path'
 
 @description('Name of the vector output produced by the embedding skill.')
 param embeddingOutputFieldName string = 'text_vector'
@@ -204,16 +210,20 @@ resource createSkillset 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         value: titleSourcePath
       }
       {
+        name: 'SOURCE_PATH_SOURCE_PATH'
+        value: sourcePathSourcePath
+      }
+      {
         name: 'OPENAI_RESOURCE_URI'
         value: openAiResourceUri
       }
       {
-        name: 'OPENAI_DEPLOYMENT_ID'
-        value: openAiDeploymentId
+        name: 'OPENAI_EMBEDDINGS_DEPLOYMENT_ID'
+        value: openAiEmbeddingsDeploymentId
       }
       {
-        name: 'OPENAI_MODEL_NAME'
-        value: openAiModelName
+        name: 'OPENAI_EMBEDDINGS_MODEL_NAME'
+        value: openAiEmbeddingsModelName
       }
       {
         name: 'OPENAI_EMBEDDING_DIMENSIONS'
@@ -238,6 +248,10 @@ resource createSkillset 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       {
         name: 'TITLE_FIELD_NAME'
         value: titleFieldName
+      }
+      {
+        name: 'SOURCE_PATH_FIELD_NAME'
+        value: sourcePathFieldName
       }
       {
         name: 'EMBEDDING_OUTPUT_FIELD_NAME'
@@ -277,7 +291,7 @@ if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
   az account set --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null
 fi
 
-API_VERSION="2024-09-01-preview"
+API_VERSION="2026-04-01"
 ADMIN_KEY=$(az search admin-key show --resource-group "$RESOURCE_GROUP_NAME" --service-name "$SEARCH_SERVICE_NAME" --query primaryKey -o tsv)
 
 if [[ -z "$ADMIN_KEY" ]]; then
@@ -290,6 +304,7 @@ PAGE_SOURCE_CONTEXT=${PAGE_SOURCE_CONTEXT:-/document/pages/*}
 DOCUMENT_CONTEXT=${DOCUMENT_CONTEXT:-/document}
 DOCUMENT_CONTENT_SOURCE_PATH=${DOCUMENT_CONTENT_SOURCE_PATH:-/document/content}
 TITLE_SOURCE_PATH=${TITLE_SOURCE_PATH:-/document/title}
+SOURCE_PATH_SOURCE_PATH=${SOURCE_PATH_SOURCE_PATH:-/document/metadata_storage_path}
 EMBEDDING_OUTPUT_FIELD_NAME=${EMBEDDING_OUTPUT_FIELD_NAME:-text_vector}
 EMBEDDING_INPUT_SOURCE="$PAGE_SOURCE_CONTEXT"
 VECTOR_SOURCE_PATH="$PAGE_SOURCE_CONTEXT/$EMBEDDING_OUTPUT_FIELD_NAME"
@@ -335,9 +350,9 @@ cat <<EOF >"$PAYLOAD_FILE"
       "description": "Generate embeddings for each chunk",
       "context": "$PAGE_SOURCE_CONTEXT",
       "resourceUri": "$OPENAI_RESOURCE_URI",
-      "deploymentId": "$OPENAI_DEPLOYMENT_ID",
+      "deploymentId": "$OPENAI_EMBEDDINGS_DEPLOYMENT_ID",
       "dimensions": $OPENAI_EMBEDDING_DIMENSIONS,
-      "modelName": "$OPENAI_MODEL_NAME",
+      "modelName": "$OPENAI_EMBEDDINGS_MODEL_NAME",
       "inputs": [
         {
           "name": "text",
@@ -370,6 +385,10 @@ cat <<EOF >"$PAYLOAD_FILE"
           {
             "name": "$TITLE_FIELD_NAME",
             "source": "$TITLE_SOURCE_PATH"
+          },
+          {
+            "name": "$SOURCE_PATH_FIELD_NAME",
+            "source": "$SOURCE_PATH_SOURCE_PATH"
           }
         ]
       }

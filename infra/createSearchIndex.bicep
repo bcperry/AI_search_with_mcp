@@ -43,6 +43,9 @@ param chunkFieldName string = 'chunk'
 @description('Name of the title field.')
 param titleFieldName string = 'title'
 
+@description('Name of the source path field.')
+param sourcePathFieldName string = 'source_path'
+
 @description('Name of the chunk key field.')
 param chunkKeyFieldName string = 'chunk_id'
 
@@ -64,11 +67,11 @@ param vectorSearchVectorizerName string = 'index-and-vectorize-azureOpenAi-text-
 @description('Azure OpenAI resource URI used by the vectorizer (e.g. https://foo.openai.azure.com).')
 param openAiResourceUri string
 
-@description('Azure OpenAI deployment identifier used by the vectorizer.')
-param openAiDeploymentId string
+@description('Azure OpenAI embeddings deployment identifier used by the vectorizer.')
+param openAiEmbeddingsDeploymentId string
 
-@description('Azure OpenAI model name used by the vectorizer.')
-param openAiModelName string
+@description('Azure OpenAI embeddings model name used by the vectorizer.')
+param openAiEmbeddingsModelName string
 
 @description('Value used to force redeployment of the script when changed.')
 param forceUpdateTag string
@@ -125,6 +128,10 @@ resource createIndex 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         value: titleFieldName
       }
       {
+        name: 'SOURCE_PATH_FIELD_NAME'
+        value: sourcePathFieldName
+      }
+      {
         name: 'VECTOR_FIELD_NAME'
         value: vectorFieldName
       }
@@ -153,12 +160,12 @@ resource createIndex 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         value: openAiResourceUri
       }
       {
-        name: 'OPENAI_DEPLOYMENT_ID'
-        value: openAiDeploymentId
+        name: 'OPENAI_EMBEDDINGS_DEPLOYMENT_ID'
+        value: openAiEmbeddingsDeploymentId
       }
       {
-        name: 'OPENAI_MODEL_NAME'
-        value: openAiModelName
+        name: 'OPENAI_EMBEDDINGS_MODEL_NAME'
+        value: openAiEmbeddingsModelName
       }
       {
         name: 'USER_ASSIGNED_IDENTITY_CLIENT_ID'
@@ -190,7 +197,7 @@ if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
   az account set --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null
 fi
 
-API_VERSION="2024-09-01-preview"
+API_VERSION="2026-04-01"
 ADMIN_KEY=$(az search admin-key show --resource-group "$RESOURCE_GROUP_NAME" --service-name "$SEARCH_SERVICE_NAME" --query primaryKey -o tsv)
 
 if [[ -z "$ADMIN_KEY" ]]; then
@@ -252,6 +259,18 @@ cat <<EOF >"$PAYLOAD_FILE"
       "stored": true,
       "sortable": false,
       "facetable": true,
+      "key": false,
+      "synonymMaps": []
+    },
+    {
+      "name": "$SOURCE_PATH_FIELD_NAME",
+      "type": "Edm.String",
+      "searchable": false,
+      "filterable": true,
+      "retrievable": true,
+      "stored": true,
+      "sortable": false,
+      "facetable": false,
       "key": false,
       "synonymMaps": []
     },
@@ -325,8 +344,8 @@ cat <<EOF >"$PAYLOAD_FILE"
         "kind": "azureOpenAI",
         "azureOpenAIParameters": {
           "resourceUri": "$OPENAI_RESOURCE_URI",
-          "deploymentId": "$OPENAI_DEPLOYMENT_ID",
-          "modelName": "$OPENAI_MODEL_NAME"
+          "deploymentId": "$OPENAI_EMBEDDINGS_DEPLOYMENT_ID",
+          "modelName": "$OPENAI_EMBEDDINGS_MODEL_NAME"
         }
       }
     ],

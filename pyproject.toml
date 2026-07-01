@@ -1,7 +1,7 @@
 [project]
 name = "ai-search-with-mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastMCP server for Azure AI Search hybrid semantic and vector retrieval"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

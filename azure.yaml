@@ -10,3 +10,7 @@ services:
     project: .
     language: python
     host: appservice
+hooks:
+  postprovision:
+    shell: sh
+    run: uv run python scripts/seed_search.py
