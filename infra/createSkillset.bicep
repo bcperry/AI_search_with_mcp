@@ -109,6 +109,18 @@ param titleFieldName string = 'title'
 @description('Name of the source path field on the target index.')
 param sourcePathFieldName string = 'source_path'
 
+@description('Name of the table-row index that receives projected table rows from the custom skill.')
+param tableTargetIndexName string
+
+@description('Name of the Azure Function App used by the table extraction custom Web API skill.')
+param tableExtractionFunctionAppName string
+
+@description('Default host name of the Azure Function App used by the table extraction custom Web API skill.')
+param tableExtractionFunctionHostName string
+
+@description('HTTP route for the table extraction custom Web API skill.')
+param tableExtractionFunctionRoute string = 'table-extraction-skill'
+
 @description('Name of the vector output produced by the embedding skill.')
 param embeddingOutputFieldName string = 'text_vector'
 
@@ -254,6 +266,22 @@ resource createSkillset 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         value: sourcePathFieldName
       }
       {
+        name: 'TABLE_TARGET_INDEX_NAME'
+        value: tableTargetIndexName
+      }
+      {
+        name: 'TABLE_EXTRACTION_FUNCTION_APP_NAME'
+        value: tableExtractionFunctionAppName
+      }
+      {
+        name: 'TABLE_EXTRACTION_FUNCTION_HOSTNAME'
+        value: tableExtractionFunctionHostName
+      }
+      {
+        name: 'TABLE_EXTRACTION_FUNCTION_ROUTE'
+        value: tableExtractionFunctionRoute
+      }
+      {
         name: 'EMBEDDING_OUTPUT_FIELD_NAME'
         value: embeddingOutputFieldName
       }
@@ -293,6 +321,7 @@ fi
 
 API_VERSION="2026-04-01"
 ADMIN_KEY=$(az search admin-key show --resource-group "$RESOURCE_GROUP_NAME" --service-name "$SEARCH_SERVICE_NAME" --query primaryKey -o tsv)
+FUNCTION_KEY=$(az functionapp keys list --resource-group "$RESOURCE_GROUP_NAME" --name "$TABLE_EXTRACTION_FUNCTION_APP_NAME" --query 'functionKeys.default' -o tsv 2>/dev/null || true)
 
 if [[ -z "$ADMIN_KEY" ]]; then
   echo "Failed to retrieve search admin key" >&2
@@ -311,6 +340,13 @@ VECTOR_SOURCE_PATH="$PAGE_SOURCE_CONTEXT/$EMBEDDING_OUTPUT_FIELD_NAME"
 CHUNK_SOURCE_PATH="$PAGE_SOURCE_CONTEXT"
 SELECTOR_SOURCE_CONTEXT="$PAGE_SOURCE_CONTEXT"
 SPLIT_SKILL_OUTPUT_TARGET_NAME=${SPLIT_SKILL_OUTPUT_TARGET_NAME:-pages}
+TABLE_ROWS_CONTEXT="/document/tableRows/*"
+TEXT_PAGES_CONTEXT="/document/textPages/*"
+TABLE_ROW_VECTOR_FIELD_NAME="content_vector"
+TABLE_EXTRACTION_FUNCTION_URI="https://$TABLE_EXTRACTION_FUNCTION_HOSTNAME/api/$TABLE_EXTRACTION_FUNCTION_ROUTE"
+if [[ -n "$FUNCTION_KEY" ]]; then
+  TABLE_EXTRACTION_FUNCTION_URI="$TABLE_EXTRACTION_FUNCTION_URI?code=$FUNCTION_KEY"
+fi
 
 PAYLOAD_FILE=$(mktemp)
 trap 'rm -f "$PAYLOAD_FILE"' EXIT
@@ -321,34 +357,41 @@ cat <<EOF >"$PAYLOAD_FILE"
   "description": "$SKILLSET_DESCRIPTION",
   "skills": [
     {
-      "@odata.type": "#Microsoft.Skills.Text.SplitSkill",
-      "name": "$SPLIT_SKILL_NAME",
-      "description": "Split content into smaller chunks",
+      "@odata.type": "#Microsoft.Skills.Custom.WebApiSkill",
+      "name": "tableExtractionSkill",
+      "description": "Extract normalized table rows with Azure Document Intelligence",
       "context": "$DOCUMENT_CONTEXT",
-      "defaultLanguageCode": "$DEFAULT_LANGUAGE_CODE",
-      "textSplitMode": "$TEXT_SPLIT_MODE",
-      "maximumPageLength": $MAXIMUM_PAGE_LENGTH,
-  "pageOverlapLength": $PAGE_OVERLAP_LENGTH,
-      "maximumPagesToTake": $MAXIMUM_PAGES_TO_TAKE,
-      "unit": "$SPLIT_UNIT",
+      "uri": "$TABLE_EXTRACTION_FUNCTION_URI",
+      "httpMethod": "POST",
+      "timeout": "PT230S",
+      "batchSize": 1,
+      "degreeOfParallelism": 1,
       "inputs": [
         {
-          "name": "text",
-          "source": "$DOCUMENT_CONTENT_SOURCE_PATH"
+          "name": "metadata_storage_path",
+          "source": "/document/metadata_storage_path"
+        },
+        {
+          "name": "metadata_storage_name",
+          "source": "/document/metadata_storage_name"
         }
       ],
       "outputs": [
         {
-          "name": "textItems",
-          "targetName": "$SPLIT_SKILL_OUTPUT_TARGET_NAME"
+          "name": "tableRows",
+          "targetName": "tableRows"
+        },
+        {
+          "name": "textPages",
+          "targetName": "textPages"
         }
       ]
     },
     {
       "@odata.type": "#Microsoft.Skills.Text.AzureOpenAIEmbeddingSkill",
-      "name": "$EMBEDDING_SKILL_NAME",
-      "description": "Generate embeddings for each chunk",
-      "context": "$PAGE_SOURCE_CONTEXT",
+      "name": "fullTextPageEmbeddingSkill",
+      "description": "Generate embeddings for full PDF page text extracted by Document Intelligence",
+      "context": "$TEXT_PAGES_CONTEXT",
       "resourceUri": "$OPENAI_RESOURCE_URI",
       "deploymentId": "$OPENAI_EMBEDDINGS_DEPLOYMENT_ID",
       "dimensions": $OPENAI_EMBEDDING_DIMENSIONS,
@@ -356,13 +399,35 @@ cat <<EOF >"$PAYLOAD_FILE"
       "inputs": [
         {
           "name": "text",
-          "source": "$EMBEDDING_INPUT_SOURCE"
+          "source": "$TEXT_PAGES_CONTEXT/content"
         }
       ],
       "outputs": [
         {
           "name": "embedding",
-          "targetName": "$EMBEDDING_OUTPUT_FIELD_NAME"
+          "targetName": "$VECTOR_FIELD_NAME"
+        }
+      ]
+    },
+    {
+      "@odata.type": "#Microsoft.Skills.Text.AzureOpenAIEmbeddingSkill",
+      "name": "tableRowEmbeddingSkill",
+      "description": "Generate embeddings for extracted table rows",
+      "context": "$TABLE_ROWS_CONTEXT",
+      "resourceUri": "$OPENAI_RESOURCE_URI",
+      "deploymentId": "$OPENAI_EMBEDDINGS_DEPLOYMENT_ID",
+      "dimensions": $OPENAI_EMBEDDING_DIMENSIONS,
+      "modelName": "$OPENAI_EMBEDDINGS_MODEL_NAME",
+      "inputs": [
+        {
+          "name": "text",
+          "source": "$TABLE_ROWS_CONTEXT/content"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "embedding",
+          "targetName": "$TABLE_ROW_VECTOR_FIELD_NAME"
         }
       ]
     }
@@ -372,24 +437,48 @@ cat <<EOF >"$PAYLOAD_FILE"
       {
         "targetIndexName": "$TARGET_INDEX_NAME",
         "parentKeyFieldName": "$PARENT_KEY_FIELD_NAME",
-        "sourceContext": "$SELECTOR_SOURCE_CONTEXT",
+        "sourceContext": "$TEXT_PAGES_CONTEXT",
         "mappings": [
           {
             "name": "$VECTOR_FIELD_NAME",
-            "source": "$VECTOR_SOURCE_PATH"
+            "source": "$TEXT_PAGES_CONTEXT/$VECTOR_FIELD_NAME"
           },
           {
             "name": "$CHUNK_FIELD_NAME",
-            "source": "$CHUNK_SOURCE_PATH"
+            "source": "$TEXT_PAGES_CONTEXT/content"
           },
           {
             "name": "$TITLE_FIELD_NAME",
-            "source": "$TITLE_SOURCE_PATH"
+            "source": "$TEXT_PAGES_CONTEXT/title"
           },
           {
             "name": "$SOURCE_PATH_FIELD_NAME",
-            "source": "$SOURCE_PATH_SOURCE_PATH"
+            "source": "$TEXT_PAGES_CONTEXT/source_path"
           }
+        ]
+      },
+      {
+        "targetIndexName": "$TABLE_TARGET_INDEX_NAME",
+        "parentKeyFieldName": "$PARENT_KEY_FIELD_NAME",
+        "sourceContext": "$TABLE_ROWS_CONTEXT",
+        "mappings": [
+          { "name": "document_name", "source": "$TABLE_ROWS_CONTEXT/document_name" },
+          { "name": "source_path", "source": "$TABLE_ROWS_CONTEXT/source_path" },
+          { "name": "page", "source": "$TABLE_ROWS_CONTEXT/page" },
+          { "name": "section", "source": "$TABLE_ROWS_CONTEXT/section" },
+          { "name": "table_title", "source": "$TABLE_ROWS_CONTEXT/table_title" },
+          { "name": "row_kind", "source": "$TABLE_ROWS_CONTEXT/row_kind" },
+          { "name": "line_number", "source": "$TABLE_ROWS_CONTEXT/line_number" },
+          { "name": "item", "source": "$TABLE_ROWS_CONTEXT/item" },
+          { "name": "category", "source": "$TABLE_ROWS_CONTEXT/category" },
+          { "name": "request_amount", "source": "$TABLE_ROWS_CONTEXT/request_amount" },
+          { "name": "authorized_amount", "source": "$TABLE_ROWS_CONTEXT/authorized_amount" },
+          { "name": "delta_amount", "source": "$TABLE_ROWS_CONTEXT/delta_amount" },
+          { "name": "adjustment_reason", "source": "$TABLE_ROWS_CONTEXT/adjustment_reason" },
+          { "name": "content", "source": "$TABLE_ROWS_CONTEXT/content" },
+          { "name": "raw_text", "source": "$TABLE_ROWS_CONTEXT/raw_text" },
+          { "name": "columns_json", "source": "$TABLE_ROWS_CONTEXT/columns_json" },
+          { "name": "$TABLE_ROW_VECTOR_FIELD_NAME", "source": "$TABLE_ROWS_CONTEXT/$TABLE_ROW_VECTOR_FIELD_NAME" }
         ]
       }
     ],

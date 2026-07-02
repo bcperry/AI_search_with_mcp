@@ -34,10 +34,15 @@ param alwaysOn bool = true
 @description('Additional application settings to apply to the Web App.')
 param appSettings object = {}
 
+@description('Resource ID of the Log Analytics workspace to send diagnostic logs to. Leave empty to skip diagnostic settings.')
+param logAnalyticsWorkspaceId string = ''
+
 var defaultAppSettings = {
   SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
   ENABLE_ORYX_BUILD: 'true'
   WEBSITES_PORT: '8000'
+  PYTHONUNBUFFERED: '1'
+  LOG_LEVEL: 'INFO'
 }
 
 var mergedAppSettings = union(defaultAppSettings, appSettings)
@@ -86,6 +91,67 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
     }
   }
   tags: tags
+}
+
+// Enable filesystem application and HTTP logging so stdout query logs and
+// request access logs are captured and viewable via the App Service Log Stream.
+resource webAppLogs 'Microsoft.Web/sites/config@2023-12-01' = {
+  parent: webApp
+  name: 'logs'
+  properties: {
+    applicationLogs: {
+      fileSystem: {
+        level: 'Information'
+      }
+    }
+    httpLogs: {
+      fileSystem: {
+        enabled: true
+        retentionInMb: 35
+        retentionInDays: 7
+      }
+    }
+    detailedErrorMessages: {
+      enabled: true
+    }
+    failedRequestsTracing: {
+      enabled: true
+    }
+  }
+}
+
+// Route App Service logs and metrics to Log Analytics so they are queryable via
+// the Logs (KQL) blade in tables like AppServiceHTTPLogs and AppServiceConsoleLogs.
+resource webAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(logAnalyticsWorkspaceId)) {
+  name: 'send-to-log-analytics'
+  scope: webApp
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      {
+        category: 'AppServiceHTTPLogs'
+        enabled: true
+      }
+      {
+        category: 'AppServiceConsoleLogs'
+        enabled: true
+      }
+      {
+        category: 'AppServiceAppLogs'
+        enabled: true
+      }
+      {
+        category: 'AppServicePlatformLogs'
+        enabled: true
+      }
+    ]
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
+    ]
+  }
 }
 
 output appServicePlanId string = appServicePlan.id

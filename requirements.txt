@@ -1,6 +1,8 @@
 aiohttp
+azure-ai-documentintelligence
 azure-identity
 azure-search-documents
 azure-storage-blob
 fastmcp
+PyMuPDF
 python-dotenv

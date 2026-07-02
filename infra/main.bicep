@@ -21,6 +21,9 @@ param resourceGroupName string
 ])
 param searchServiceSku string
 
+@description('Name of an existing Azure AI Search service to reuse. Leave empty for first-time provisioning.')
+param existingSearchServiceName string = ''
+
 @description('SKU for the storage account.')
 @allowed([
   'Standard_LRS'
@@ -83,6 +86,12 @@ param cloudName string
 @description('Embeddings model identifier to deploy to Azure AI Foundry.')
 param openAiEmbeddingsModelName string = 'text-embedding-ada-002'
 
+@description('Name of an existing Azure AI Foundry (Azure OpenAI) account to reuse. Leave empty for first-time provisioning.')
+param existingOpenAiAccountName string = ''
+
+@description('Name of an existing Azure OpenAI embeddings deployment to reuse. Leave empty for first-time provisioning.')
+param existingOpenAiEmbeddingsDeploymentName string = ''
+
 @description('Embeddings model version for the Azure AI Foundry deployment.')
 param openAiEmbeddingsModelVersion string = '2'
 
@@ -94,17 +103,12 @@ param openAiEmbeddingsDeploymentCapacity int = 10
 @minValue(1)
 param openAiEmbeddingsDimensions int = 1536
 
-@description('Value used to force the index deployment script to rerun on each deployment.')
-param searchIndexScriptForceUpdateTag string = newGuid()
-
-@description('Value used to force the skillset deployment script to rerun on each deployment.')
-param searchSkillsetScriptForceUpdateTag string = newGuid()
-
-@description('Value used to force the indexer deployment script to rerun on each deployment.')
-param searchIndexerScriptForceUpdateTag string = newGuid()
-
-@description('Whether to run deploymentScripts modules that configure Search data source/index/skillset/indexer.')
-param enableSearchConfigDeploymentScripts bool = false
+@description('SKU name for the Azure AI Document Intelligence account used for layout/table extraction.')
+@allowed([
+  'F0'
+  'S0'
+])
+param documentIntelligenceSkuName string = 'S0'
 
 @description('Enable Azure AD token validation on the MCP server (true/false).')
 param azureAdRequireAuth string = 'false'
@@ -117,31 +121,13 @@ param azureAdClientId string = ''
 
 var normalizedEnvironmentName = toLower(replace(environmentName, ' ', '-'))
 var finalResourceGroupName = resourceGroupName
-var userAssignedIdentityName = '${normalizedEnvironmentName}-uami'
-var managedIdentityModuleName = '${normalizedEnvironmentName}-uami'
 var searchServiceName = '${normalizedEnvironmentName}-search'
 var searchServiceModuleName = '${normalizedEnvironmentName}-search-deploy'
+var useExistingSearchService = !empty(existingSearchServiceName)
+var resolvedSearchServiceName = useExistingSearchService ? existingSearchServiceName : searchServiceName
 var storageAccountModuleName = '${normalizedEnvironmentName}-storage-deploy'
 var storageContainerName = 'aisearchdata'
-var searchDataSourceName = '${normalizedEnvironmentName}-storage-ds'
-var createSearchDataSourceModuleName = '${normalizedEnvironmentName}-datasource-script'
-var searchSkillsetName = '${normalizedEnvironmentName}-index-and-vectorize-skillset'
-var searchSkillsetModuleName = '${normalizedEnvironmentName}-skillset-script'
-var searchIndexModuleName = '${normalizedEnvironmentName}-index-script'
 var searchTargetIndexName = '${normalizedEnvironmentName}-index-and-vectorize'
-var searchIndexerName = '${normalizedEnvironmentName}-index-and-vectorize-indexer'
-var searchIndexerModuleName = '${normalizedEnvironmentName}-indexer-script'
-var searchIndexChunkKeyFieldName = 'chunk_id'
-var searchIndexParentKeyFieldName = 'parent_id'
-var searchIndexChunkFieldName = 'chunk'
-var searchIndexTitleFieldName = 'title'
-var searchIndexSourcePathFieldName = 'source_path'
-var searchIndexVectorFieldName = 'text_vector'
-var searchIndexSemanticConfigurationName = 'index-and-vectorize-semantic-configuration'
-var searchIndexVectorAlgorithmName = 'index-and-vectorize-algorithm'
-var searchIndexVectorProfileName = 'index-and-vectorize-azureOpenAi-text-profile'
-var searchIndexVectorizerName = 'index-and-vectorize-azureOpenAi-text-vectorizer'
-var scriptIdentityRoleAssignmentName = guid(subscription().id, finalResourceGroupName, searchServiceName, userAssignedIdentityName, 'search-service-contributor')
 var cloudSuffixes = {
   AzureCloud: 'windows.net'
   AzureChinaCloud: 'azure.cn'
@@ -163,21 +149,28 @@ var storageAccountName = length(storageAccountCandidate) > 24 ? substring(storag
 var openAiAccountModuleName = '${normalizedEnvironmentName}-aoai-deploy'
 var openAiAccountBaseName = length(normalizedEnvironmentName) > 0 ? normalizedEnvironmentName : 'env'
 var openAiAccountCandidate = '${openAiAccountBaseName}-aoai'
-var openAiAccountName = length(openAiAccountCandidate) > 44 ? substring(openAiAccountCandidate, 0, 44) : openAiAccountCandidate
+var provisionedOpenAiAccountName = length(openAiAccountCandidate) > 44 ? substring(openAiAccountCandidate, 0, 44) : openAiAccountCandidate
+var useExistingOpenAi = !empty(existingOpenAiAccountName) && !empty(existingOpenAiEmbeddingsDeploymentName)
+var resolvedOpenAiAccountName = useExistingOpenAi ? existingOpenAiAccountName : provisionedOpenAiAccountName
 var openAiSubdomainBase = replace(openAiAccountBaseName, '-', '')
 var openAiSubdomainBaseClean = length(openAiSubdomainBase) > 0 ? openAiSubdomainBase : 'aoai'
 var openAiSubdomainWithSuffix = '${openAiSubdomainBaseClean}aoai'
 var openAiCustomSubDomainName = length(openAiSubdomainWithSuffix) > 30 ? substring(openAiSubdomainWithSuffix, 0, 30) : openAiSubdomainWithSuffix
-var openAiEmbeddingsDeploymentName = openAiEmbeddingsModelName
+var provisionedOpenAiEmbeddingsDeploymentName = openAiEmbeddingsModelName
 var openAiRoleAssignmentModuleName = '${normalizedEnvironmentName}-aoai-role'
 var openAiContributorRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a001fd3d-188f-4b5d-821b-7da978bf7442')
-var openAiContributorRoleAssignmentName = guid(subscription().id, finalResourceGroupName, openAiAccountName, searchServiceName, 'openai-contributor')
+var openAiContributorRoleAssignmentName = guid(subscription().id, finalResourceGroupName, resolvedOpenAiAccountName, resolvedSearchServiceName, 'openai-contributor')
+var documentIntelligenceModuleName = '${normalizedEnvironmentName}-di-deploy'
+var documentIntelligenceAccountCandidate = '${openAiSubdomainBaseClean}di'
+var documentIntelligenceAccountName = length(documentIntelligenceAccountCandidate) > 30 ? substring(documentIntelligenceAccountCandidate, 0, 30) : documentIntelligenceAccountCandidate
 var appServicePlanName = '${normalizedEnvironmentName}-plan'
 var webAppModuleName = '${normalizedEnvironmentName}-webapp-deploy'
 var webAppBaseName = toLower(replace(replace(replace(resourceGroupName, '_', '-'), ' ', '-'), '--', '-'))
 var webAppBaseFallback = length(webAppBaseName) == 0 ? '${normalizedEnvironmentName}-app' : webAppBaseName
 var webAppNameCandidate = startsWith(webAppBaseFallback, '-') ? 'a${webAppBaseFallback}' : webAppBaseFallback
 var webAppName = length(webAppNameCandidate) > 60 ? substring(webAppNameCandidate, 0, 60) : webAppNameCandidate
+var logAnalyticsModuleName = '${normalizedEnvironmentName}-logs-deploy'
+var logAnalyticsWorkspaceName = '${normalizedEnvironmentName}-logs'
 
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   name: finalResourceGroupName
@@ -187,16 +180,7 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   }
 }
 
-module userAssignedIdentity './managedIdentity.bicep' = {
-  name: managedIdentityModuleName
-  scope: rg
-  params: {
-    userAssignedIdentityName: userAssignedIdentityName
-    location: location
-  }
-}
-
-module searchService 'searchService.bicep' = {
+module searchService 'searchService.bicep' = if (!useExistingSearchService) {
   name: searchServiceModuleName
   scope: rg
   params: {
@@ -209,6 +193,19 @@ module searchService 'searchService.bicep' = {
     endpointSuffix: resolvedSearchEndpointSuffix
   }
 }
+
+module existingSearchService './searchServiceExisting.bicep' = if (useExistingSearchService) {
+  name: '${normalizedEnvironmentName}-search-existing'
+  scope: rg
+  params: {
+    searchServiceName: existingSearchServiceName
+    endpointSuffix: resolvedSearchEndpointSuffix
+  }
+}
+
+var searchServiceId = useExistingSearchService ? existingSearchService!.outputs.searchServiceId : searchService!.outputs.searchServiceId
+var searchServiceEndpoint = useExistingSearchService ? existingSearchService!.outputs.searchServiceEndpoint : searchService!.outputs.searchServiceEndpoint
+var searchServicePrincipalId = useExistingSearchService ? existingSearchService!.outputs.searchServicePrincipalId : searchService!.outputs.searchServicePrincipalId
 
 module storageAccount './storageAccount.bicep' = {
   name: storageAccountModuleName
@@ -225,31 +222,71 @@ module storageAccount './storageAccount.bicep' = {
   }
 }
 
-module openAi './azureOpenAi.bicep' = {
+module openAi './azureOpenAi.bicep' = if (!useExistingOpenAi) {
   name: openAiAccountModuleName
   scope: rg
   params: {
-    openAiAccountName: openAiAccountName
+    openAiAccountName: provisionedOpenAiAccountName
     customSubDomainName: openAiCustomSubDomainName
     location: location
     tags: {
       'azd-env-name': environmentName
     }
-    embeddingsDeploymentName: openAiEmbeddingsDeploymentName
+    embeddingsDeploymentName: provisionedOpenAiEmbeddingsDeploymentName
     embeddingsModelName: openAiEmbeddingsModelName
     embeddingsModelVersion: openAiEmbeddingsModelVersion
     embeddingsCapacity: openAiEmbeddingsDeploymentCapacity
   }
 }
 
+module existingOpenAi './azureOpenAiExisting.bicep' = if (useExistingOpenAi) {
+  name: '${normalizedEnvironmentName}-aoai-existing'
+  scope: rg
+  params: {
+    openAiAccountName: existingOpenAiAccountName
+    embeddingsDeploymentName: existingOpenAiEmbeddingsDeploymentName
+  }
+}
+
+var openAiAccountId = useExistingOpenAi ? existingOpenAi!.outputs.openAiAccountId : openAi!.outputs.openAiAccountId
+var openAiAccountEndpoint = useExistingOpenAi ? existingOpenAi!.outputs.openAiAccountEndpoint : openAi!.outputs.openAiAccountEndpoint
+var openAiEmbeddingsDeploymentId = useExistingOpenAi ? existingOpenAi!.outputs.openAiEmbeddingsDeploymentId : openAi!.outputs.openAiEmbeddingsDeploymentId
+var openAiEmbeddingsDeploymentName = useExistingOpenAi ? existingOpenAi!.outputs.openAiEmbeddingsDeploymentName : openAi!.outputs.openAiEmbeddingsDeploymentName
+var openAiEmbeddingsDeploymentModel = useExistingOpenAi ? existingOpenAi!.outputs.openAiEmbeddingsDeploymentModel : openAi!.outputs.openAiEmbeddingsDeploymentModel
+
 module openAiAccess './openAiRoleAssignment.bicep' = {
   name: openAiRoleAssignmentModuleName
   scope: rg
   params: {
     roleAssignmentName: openAiContributorRoleAssignmentName
-    openAiAccountName: openAiAccountName
-    principalId: searchService.outputs.searchServicePrincipalId
+    openAiAccountName: resolvedOpenAiAccountName
+    principalId: searchServicePrincipalId
     roleDefinitionId: openAiContributorRoleDefinitionId
+  }
+}
+
+module documentIntelligence './documentIntelligence.bicep' = {
+  name: documentIntelligenceModuleName
+  scope: rg
+  params: {
+    documentIntelligenceAccountName: documentIntelligenceAccountName
+    location: location
+    skuName: documentIntelligenceSkuName
+    tags: {
+      'azd-env-name': environmentName
+    }
+  }
+}
+
+module logAnalytics './logAnalytics.bicep' = {
+  name: logAnalyticsModuleName
+  scope: rg
+  params: {
+    workspaceName: logAnalyticsWorkspaceName
+    location: location
+    tags: {
+      'azd-env-name': environmentName
+    }
   }
 }
 
@@ -270,14 +307,17 @@ module webApp './webApp.bicep' = {
     pythonVersion: webAppPythonVersion
     startupCommand: webAppStartupCommand
     alwaysOn: webAppAlwaysOn
+    logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceId
     appSettings: {
       AZURE_ENV_NAME: environmentName
       CLOUD_NAME: cloudName
-      SEARCH_SERVICE_ENDPOINT: searchService.outputs.searchServiceEndpoint
+      SEARCH_SERVICE_ENDPOINT: searchServiceEndpoint
       SEARCH_INDEX_NAME: searchTargetIndexName
-      SEARCH_SERVICE_NAME: searchServiceName
-      OPENAI_ACCOUNT_ENDPOINT: openAi.outputs.openAiAccountEndpoint
-      OPENAI_EMBEDDINGS_DEPLOYMENT_NAME: openAi.outputs.openAiEmbeddingsDeploymentName
+      SEARCH_SERVICE_NAME: resolvedSearchServiceName
+      OPENAI_ACCOUNT_ENDPOINT: openAiAccountEndpoint
+      OPENAI_EMBEDDINGS_DEPLOYMENT_NAME: openAiEmbeddingsDeploymentName
+      DOCUMENT_INTELLIGENCE_ACCOUNT_NAME: documentIntelligence.outputs.documentIntelligenceAccountName
+      DOCUMENT_INTELLIGENCE_ENDPOINT: documentIntelligence.outputs.documentIntelligenceEndpoint
       STORAGE_ACCOUNT_BLOB_ENDPOINT: storageAccount.outputs.blobEndpoint
       STORAGE_ACCOUNT_CONTAINER_NAME: storageContainerName
       AZURE_AD_REQUIRE_AUTH: azureAdRequireAuth
@@ -291,8 +331,8 @@ module webAppSearchDataReader './searchServiceRoleAssignment.bicep' = {
   name: '${normalizedEnvironmentName}-webapp-search-reader'
   scope: rg
   params: {
-    roleAssignmentName: guid(subscription().id, finalResourceGroupName, searchServiceName, webAppName, 'search-data-reader')
-    searchServiceName: searchServiceName
+    roleAssignmentName: guid(subscription().id, finalResourceGroupName, resolvedSearchServiceName, webAppName, 'search-data-reader')
+    searchServiceName: resolvedSearchServiceName
     principalId: webApp.outputs.webAppIdentityPrincipalId
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '1407120a-92aa-4202-b7e9-c0e197c71c8f')
   }
@@ -302,8 +342,8 @@ module webAppSearchServiceContributor './searchServiceRoleAssignment.bicep' = {
   name: '${normalizedEnvironmentName}-webapp-search-contrib'
   scope: rg
   params: {
-    roleAssignmentName: guid(subscription().id, finalResourceGroupName, searchServiceName, webAppName, 'search-service-contributor')
-    searchServiceName: searchServiceName
+    roleAssignmentName: guid(subscription().id, finalResourceGroupName, resolvedSearchServiceName, webAppName, 'search-service-contributor')
+    searchServiceName: resolvedSearchServiceName
     principalId: webApp.outputs.webAppIdentityPrincipalId
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7ca78c08-252a-4471-8644-bb5ff32d4ba0')
   }
@@ -313,9 +353,9 @@ module searchServiceBlobDataReader 'storageAccountRoleAssignment.bicep' = {
   name: '${normalizedEnvironmentName}-search-blob-reader'
   scope: rg
   params: {
-    roleAssignmentName: guid(subscription().id, finalResourceGroupName, storageAccountName, searchServiceName, 'blob-data-reader')
+    roleAssignmentName: guid(subscription().id, finalResourceGroupName, storageAccountName, resolvedSearchServiceName, 'blob-data-reader')
     storageAccountName: storageAccountName
-    principalId: searchService.outputs.searchServicePrincipalId
+    principalId: searchServicePrincipalId
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
   }
 }
@@ -331,155 +371,23 @@ module webAppBlobDataReader 'storageAccountRoleAssignment.bicep' = {
   }
 }
 
-module scriptIdentitySearchContributor './searchServiceRoleAssignment.bicep' = if (enableSearchConfigDeploymentScripts) {
-  name: '${normalizedEnvironmentName}-script-search-contrib'
-  scope: rg
-  params: {
-    roleAssignmentName: scriptIdentityRoleAssignmentName
-    searchServiceName: searchServiceName
-    principalId: userAssignedIdentity.outputs.userAssignedIdentityPrincipalId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7ca78c08-252a-4471-8644-bb5ff32d4ba0')
-  }
-}
-
-module createSearchDataSource './createSearchDataSource.bicep' = if (enableSearchConfigDeploymentScripts) {
-  name: createSearchDataSourceModuleName
-  scope: rg
-  params: {
-    location: location
-    searchServiceName: searchServiceName
-    dataSourceName: searchDataSourceName
-    containerName: storageContainerName
-    storageAccountResourceId: storageAccount.outputs.storageAccountId
-    searchServiceEndpoint: searchService.outputs.searchServiceEndpoint
-    resourceGroupName: finalResourceGroupName
-    userAssignedIdentityResourceId: userAssignedIdentity.outputs.userAssignedIdentityId
-    userAssignedIdentityClientId: userAssignedIdentity.outputs.userAssignedIdentityClientId
-    cloudName: cloudName
-    subscriptionId: subscription().subscriptionId
-    tenantId: subscription().tenantId
-  }
-  dependsOn: [
-    scriptIdentitySearchContributor
-    searchServiceBlobDataReader
-  ]
-}
-
-module createSearchIndex './createSearchIndex.bicep' = if (enableSearchConfigDeploymentScripts) {
-  name: searchIndexModuleName
-  scope: rg
-  params: {
-    location: location
-    searchServiceName: searchServiceName
-    indexName: searchTargetIndexName
-    searchServiceEndpoint: searchService.outputs.searchServiceEndpoint
-    resourceGroupName: finalResourceGroupName
-    userAssignedIdentityResourceId: userAssignedIdentity.outputs.userAssignedIdentityId
-    userAssignedIdentityClientId: userAssignedIdentity.outputs.userAssignedIdentityClientId
-    cloudName: cloudName
-    subscriptionId: subscription().subscriptionId
-    tenantId: subscription().tenantId
-    vectorDimensions: openAiEmbeddingsDimensions
-    vectorFieldName: searchIndexVectorFieldName
-    chunkFieldName: searchIndexChunkFieldName
-    titleFieldName: searchIndexTitleFieldName
-    sourcePathFieldName: searchIndexSourcePathFieldName
-    chunkKeyFieldName: searchIndexChunkKeyFieldName
-    parentKeyFieldName: searchIndexParentKeyFieldName
-    semanticConfigurationName: searchIndexSemanticConfigurationName
-    vectorSearchAlgorithmName: searchIndexVectorAlgorithmName
-    vectorSearchProfileName: searchIndexVectorProfileName
-    vectorSearchVectorizerName: searchIndexVectorizerName
-    openAiResourceUri: openAi.outputs.openAiAccountEndpoint
-    openAiEmbeddingsDeploymentId: openAi.outputs.openAiEmbeddingsDeploymentName
-    openAiEmbeddingsModelName: openAi.outputs.openAiEmbeddingsDeploymentModel
-    forceUpdateTag: searchIndexScriptForceUpdateTag
-  }
-  dependsOn: [
-    scriptIdentitySearchContributor
-    openAiAccess
-  ]
-}
-
-module createSearchSkillset './createSkillset.bicep' = if (enableSearchConfigDeploymentScripts) {
-  name: searchSkillsetModuleName
-  scope: rg
-  params: {
-    location: location
-    searchServiceName: searchServiceName
-    skillsetName: searchSkillsetName
-    searchServiceEndpoint: searchService.outputs.searchServiceEndpoint
-    resourceGroupName: finalResourceGroupName
-    userAssignedIdentityResourceId: userAssignedIdentity.outputs.userAssignedIdentityId
-    userAssignedIdentityClientId: userAssignedIdentity.outputs.userAssignedIdentityClientId
-    cloudName: cloudName
-    subscriptionId: subscription().subscriptionId
-    tenantId: subscription().tenantId
-    openAiResourceUri: openAi.outputs.openAiAccountEndpoint
-    openAiEmbeddingsDeploymentId: openAi.outputs.openAiEmbeddingsDeploymentName
-    openAiEmbeddingsModelName: openAi.outputs.openAiEmbeddingsDeploymentModel
-    openAiEmbeddingDimensions: openAiEmbeddingsDimensions
-    targetIndexName: searchTargetIndexName
-    parentKeyFieldName: searchIndexParentKeyFieldName
-    vectorFieldName: searchIndexVectorFieldName
-    chunkFieldName: searchIndexChunkFieldName
-    titleFieldName: searchIndexTitleFieldName
-    sourcePathFieldName: searchIndexSourcePathFieldName
-    forceUpdateTag: searchSkillsetScriptForceUpdateTag
-  }
-  dependsOn: [
-    scriptIdentitySearchContributor
-    createSearchDataSource
-    openAiAccess
-    createSearchIndex
-  ]
-}
-
-module createSearchIndexer './createSearchIndexer.bicep' = if (enableSearchConfigDeploymentScripts) {
-  name: searchIndexerModuleName
-  scope: rg
-  params: {
-    location: location
-    searchServiceName: searchServiceName
-    indexerName: searchIndexerName
-    dataSourceName: searchDataSourceName
-    skillsetName: searchSkillsetName
-    targetIndexName: searchTargetIndexName
-    searchServiceEndpoint: searchService.outputs.searchServiceEndpoint
-    resourceGroupName: finalResourceGroupName
-    userAssignedIdentityResourceId: userAssignedIdentity.outputs.userAssignedIdentityId
-    userAssignedIdentityClientId: userAssignedIdentity.outputs.userAssignedIdentityClientId
-    cloudName: cloudName
-    subscriptionId: subscription().subscriptionId
-    tenantId: subscription().tenantId
-    parsingMode: 'default'
-    titleSourceFieldName: 'metadata_storage_name'
-    titleTargetFieldName: searchIndexTitleFieldName
-    forceUpdateTag: searchIndexerScriptForceUpdateTag
-  }
-  dependsOn: [
-    scriptIdentitySearchContributor
-    createSearchDataSource
-    createSearchIndex
-    createSearchSkillset
-  ]
-}
-
 output RESOURCE_GROUP_ID string = rg.id
 output REQUESTED_RESOURCE_GROUP_NAME string = resourceGroupName
-output USER_ASSIGNED_IDENTITY_ID string = userAssignedIdentity.outputs.userAssignedIdentityId
-output SEARCH_SERVICE_ID string = searchService.outputs.searchServiceId
-output SEARCH_SERVICE_NAME string = searchServiceName
-output SEARCH_SERVICE_ENDPOINT string = searchService.outputs.searchServiceEndpoint
+output SEARCH_SERVICE_ID string = searchServiceId
+output SEARCH_SERVICE_NAME string = resolvedSearchServiceName
+output SEARCH_SERVICE_ENDPOINT string = searchServiceEndpoint
 output SEARCH_SERVICE_ENDPOINT_SUFFIX string = resolvedSearchEndpointSuffix
 output CLOUD_NAME string = cloudName
-output OPENAI_ACCOUNT_ID string = openAi.outputs.openAiAccountId
-output OPENAI_ACCOUNT_NAME string = openAi.outputs.openAiAccountName
-output OPENAI_ACCOUNT_ENDPOINT string = openAi.outputs.openAiAccountEndpoint
-output OPENAI_EMBEDDINGS_DEPLOYMENT_ID string = openAi.outputs.openAiEmbeddingsDeploymentId
-output OPENAI_EMBEDDINGS_DEPLOYMENT_NAME string = openAi.outputs.openAiEmbeddingsDeploymentName
-output OPENAI_EMBEDDINGS_DEPLOYMENT_MODEL string = openAi.outputs.openAiEmbeddingsDeploymentModel
+output OPENAI_ACCOUNT_ID string = openAiAccountId
+output OPENAI_ACCOUNT_NAME string = resolvedOpenAiAccountName
+output OPENAI_ACCOUNT_ENDPOINT string = openAiAccountEndpoint
+output OPENAI_EMBEDDINGS_DEPLOYMENT_ID string = openAiEmbeddingsDeploymentId
+output OPENAI_EMBEDDINGS_DEPLOYMENT_NAME string = openAiEmbeddingsDeploymentName
+output OPENAI_EMBEDDINGS_DEPLOYMENT_MODEL string = openAiEmbeddingsDeploymentModel
 output OPENAI_EMBEDDINGS_DIMENSIONS string = string(openAiEmbeddingsDimensions)
+output DOCUMENT_INTELLIGENCE_ACCOUNT_ID string = documentIntelligence.outputs.documentIntelligenceAccountId
+output DOCUMENT_INTELLIGENCE_ACCOUNT_NAME string = documentIntelligence.outputs.documentIntelligenceAccountName
+output DOCUMENT_INTELLIGENCE_ENDPOINT string = documentIntelligence.outputs.documentIntelligenceEndpoint
 output STORAGE_ACCOUNT_ID string = storageAccount.outputs.storageAccountId
 output STORAGE_ACCOUNT_NAME string = storageAccountName
 output STORAGE_ACCOUNT_BLOB_ENDPOINT string = storageAccount.outputs.blobEndpoint
@@ -487,10 +395,8 @@ output STORAGE_ACCOUNT_TABLE_ENDPOINT string = storageAccount.outputs.tableEndpo
 output STORAGE_ACCOUNT_QUEUE_ENDPOINT string = storageAccount.outputs.queueEndpoint
 output STORAGE_ACCOUNT_FILE_ENDPOINT string = storageAccount.outputs.fileEndpoint
 output STORAGE_ACCOUNT_CONTAINER_NAME string = storageContainerName
-output SEARCH_DATA_SOURCE_NAME string = searchDataSourceName
 output SEARCH_INDEX_NAME string = searchTargetIndexName
-output SEARCH_SKILLSET_NAME string = searchSkillsetName
-output SEARCH_INDEXER_NAME string = searchIndexerName
+output SEARCH_TABLE_ROW_INDEX_NAME string = '${normalizedEnvironmentName}-table-rows'
 output WEB_APP_ID string = webApp.outputs.webAppId
 output WEB_APP_NAME string = webAppName
 output WEB_APP_DEFAULT_HOST_NAME string = webApp.outputs.webAppDefaultHostName

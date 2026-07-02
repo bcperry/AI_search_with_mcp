@@ -27,10 +27,36 @@ from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.jwt import JWTVerifier
+from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.types import Image
 import uvicorn
 
-logger = logging.getLogger(__name__)
+
+def _configure_logging() -> None:
+    """Configure root logging so App Service captures application logs.
+
+    Honors the LOG_LEVEL env var (default INFO). Emits a timestamped, structured
+    line format to stdout, which Azure App Service surfaces in the Log Stream and
+    Application Insights. Safe to call more than once; only configures handlers on
+    the first call.
+    """
+    level_name = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    logging.getLogger().setLevel(level)
+
+    # Keep noisy Azure SDK HTTP logging out of the default output unless explicitly raised.
+    logging.getLogger("azure").setLevel(os.getenv("AZURE_LOG_LEVEL", "WARNING").strip().upper())
+
+
+_configure_logging()
+
+logger = logging.getLogger("mcp.app")
+query_logger = logging.getLogger("mcp.queries")
 
 # Load root .env early so MCP_AUTH_* vars are available at import time
 load_dotenv(override=False)
@@ -139,7 +165,6 @@ def _build_auth() -> Optional[JWTVerifier]:
 mcp = FastMCP("Azure AI Search MCP", auth=_build_auth())
 
 _ENV_DIRECTORY = Path.cwd() / ".azure"
-_ENV_PREFIX = "avcoe-*"
 _VALID_CONTAINER_NAME_PATTERN = re.compile(r'^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$')
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 _NON_IMAGE_EXTENSIONS = {
@@ -171,6 +196,58 @@ def _make_jsonable(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_make_jsonable(item) for item in value]
     return str(value)
+
+
+def _client_ip() -> str:
+    """Best-effort resolution of the calling client's IP address.
+
+    App Service terminates TLS at a front-end load balancer, so the direct socket
+    peer is an internal address. The real client IP is forwarded in the
+    ``X-Forwarded-For`` header (first entry is the originating client). Falls back
+    to ``X-Client-IP`` and finally the direct socket peer when no proxy header is
+    present (e.g. local development). Returns ``"unknown"`` when no request is in
+    scope, such as during startup or non-HTTP transports.
+    """
+    try:
+        request = get_http_request()
+    except Exception:
+        return "unknown"
+
+    if request is None:
+        return "unknown"
+
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        # May be a comma-separated list: "client, proxy1, proxy2". Strip any :port.
+        first = forwarded_for.split(",")[0].strip()
+        if first:
+            return first.rsplit(":", 1)[0] if first.count(":") == 1 and "." in first else first
+
+    client_ip = request.headers.get("x-client-ip")
+    if client_ip:
+        return client_ip.strip()
+
+    if request.client and request.client.host:
+        return request.client.host
+
+    return "unknown"
+
+
+def _log_query(tool: str, query: str, **extra: Any) -> None:
+    """Emit a structured log line recording a search query and its origin IP.
+
+    Records the tool name, originating client IP, and query text so App Service
+    Log Stream / Application Insights retains an auditable record of what was
+    searched and from where.
+    """
+    detail = " ".join(f"{key}={value}" for key, value in extra.items() if value is not None)
+    query_logger.info(
+        "tool=%s client_ip=%s query=%r%s",
+        tool,
+        _client_ip(),
+        query,
+        f" {detail}" if detail else "",
+    )
 
 
 def _should_exclude_search_field(field_name: str, value: Any) -> bool:
@@ -213,14 +290,14 @@ def _load_environment() -> Optional[Path]:
         logger.info("Running in Azure - using existing environment variables")
         return None
 
-    env_file = next(
-        (
-            candidate / ".env"
-            for candidate in _ENV_DIRECTORY.glob(_ENV_PREFIX)
-            if (candidate / ".env").exists()
-        ),
-        None,
-    )
+    candidates: list[Path] = []
+    env_name = os.getenv("AZURE_ENV_NAME", "").strip()
+    if env_name:
+        candidates.append(_ENV_DIRECTORY / env_name / ".env")
+    if _ENV_DIRECTORY.exists():
+        candidates.extend(sorted(_ENV_DIRECTORY.glob("*/.env"), reverse=True))
+
+    env_file = next((candidate for candidate in candidates if candidate.exists()), None)
     if env_file is None:
         root_env = Path.cwd() / ".env"
         if root_env.exists():
@@ -230,7 +307,7 @@ def _load_environment() -> Optional[Path]:
             return root_env
 
         logger.warning(
-            "Could not locate an avcoe-* environment directory under .azure and no root .env found - using existing environment variables"
+            "Could not locate an azd environment directory under .azure and no root .env found - using existing environment variables"
         )
         _apply_cloud_authority_from_env()
         return None
@@ -418,7 +495,7 @@ async def _download_blob_image(content_path: str) -> Optional[Image]:
     return Image(data=data, format=fmt)
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=4)
 def _get_search_client(index_name: Optional[str] = None) -> SearchClient:
     """Construct a SearchClient configured for the current cloud."""
 
@@ -448,6 +525,25 @@ def _get_search_client(index_name: Optional[str] = None) -> SearchClient:
 
     credential = _build_default_credential(authority_host)
     return SearchClient(endpoint=endpoint, index_name=resolved_index, credential=credential, audience=audience)
+
+
+def _get_table_row_index_name() -> str:
+    configured_name = os.getenv("SEARCH_TABLE_ROW_INDEX_NAME", "").strip()
+    if configured_name:
+        return configured_name
+
+    environment_name = os.getenv("AZURE_ENV_NAME", "").strip()
+    if environment_name:
+        return f"{environment_name}-table-rows"
+
+    index_name = os.getenv("SEARCH_INDEX_NAME", "").strip()
+    if index_name.endswith("-index-and-vectorize"):
+        return f"{index_name.removesuffix('-index-and-vectorize')}-table-rows"
+    return f"{index_name}-table-rows"
+
+
+def _escape_odata_string(value: str) -> str:
+    return value.replace("'", "''")
 
 
 class IndexSchema(NamedTuple):
@@ -561,7 +657,33 @@ async def semantic_search(
     query: str,
     top: int = 3,
 ) -> Dict[str, Any]:
-    """Run hybrid semantic search and return the portal-style non-vector hit data.
+    """Search the NDAA document corpus for narrative text, section context, and policy language.
+
+    Use this tool for natural-language questions about the National Defense
+    Authorization Act data, including section summaries, definitions,
+    requirements, reporting language, program descriptions, and surrounding
+    prose context. This is the best first search when the user asks what the
+    NDAA says about a topic, agency, weapon system, program, title, subtitle,
+    or section.
+
+    This tool returns chunk-level text hits from Azure AI Search with vector
+    fields removed. Treat these hits as narrative grounding and routing clues:
+    use returned sections, program names, agencies, weapon systems, and source
+    paths to decide whether a follow-up table_row_search is needed.
+
+    Call table_row_search after this tool when the semantic hits suggest the
+    answer depends on funding tables, authorization amounts, line numbers,
+    procurement rows, military construction tables, or specific dollar amounts.
+    Combine this tool's prose context with table_row_search's normalized rows
+    when answering questions that need both what the NDAA says and the exact
+    table facts. table_row_search can also be called directly when the user is
+    clearly asking for a table row, line item, amount, section table, or funding
+    figure.
+
+    Good examples for this tool:
+    - "What does the NDAA say about HIMARS?"
+    - "Summarize section 4101 context, then call table_row_search for funding rows."
+    - "Find NDAA language about shipbuilding, Ukraine assistance, or cyber operations."
 
     Args:
         query: Natural language search query.
@@ -577,6 +699,8 @@ async def semantic_search(
 
     if top <= 0:
         raise ValueError("top must be greater than zero")
+
+    _log_query("semantic_search", query, top=top)
 
     client = _get_search_client()
     schema = _get_index_schema()
@@ -639,6 +763,107 @@ async def semantic_search(
         raise RuntimeError(f"Search request failed: {str(exc)}") from exc
 
 
+@mcp.tool()
+async def table_row_search(
+    query: str,
+    top: int = 5,
+    section: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Search normalized NDAA table rows for line items, amounts, and tabular facts.
+
+    Use this tool when the user asks about NDAA tables, funding lines, dollar
+    amounts, authorization tables, procurement rows, military construction
+    tables, or a specific line item such as HIMARS. This tool can be called
+    directly for clear table questions, or after semantic_search when narrative
+    hits show that more precise table facts are needed.
+
+    This tool is the precision follow-up to semantic_search: use section numbers,
+    program names, weapon systems, accounts, or line items discovered by
+    semantic_search as query terms or as the optional section filter here. For
+    answers that need both context and exact amounts, combine semantic_search's
+    prose hits with this tool's normalized row fields.
+
+    Args:
+        query: Natural language query, program name, account, weapon system, or line-item text to search for.
+        top: Maximum number of table rows to return.
+        section: Optional NDAA section number filter, such as "4101".
+
+    Returns:
+        A dictionary containing normalized table rows with typed fields such as
+        section, page, line_number, item, request_amount, authorized_amount, and content.
+
+    Raises:
+        ValueError: If top <= 0
+        RuntimeError: If the search request fails or the service is unreachable
+    """
+
+    if top <= 0:
+        raise ValueError("top must be greater than zero")
+
+    _log_query("table_row_search", query, top=top, section=section)
+
+    table_index_name = _get_table_row_index_name()
+    client = _get_search_client(table_index_name)
+    endpoint = os.getenv("SEARCH_SERVICE_ENDPOINT") or ""
+
+    def _run() -> Dict[str, Any]:
+        search_kwargs: Dict[str, Any] = {
+            "include_total_count": True,
+            "top": top,
+            "query_type": "semantic",
+            "semantic_query": query,
+            "query_answer": "extractive",
+            "query_answer_count": min(top, 5),
+            "query_caption": "extractive",
+            "query_caption_highlight_enabled": True,
+            "select": [
+                "document_name",
+                "source_path",
+                "page",
+                "section",
+                "table_title",
+                "row_kind",
+                "line_number",
+                "item",
+                "category",
+                "request_amount",
+                "authorized_amount",
+                "delta_amount",
+                "adjustment_reason",
+                "content",
+                "raw_text",
+                "columns_json",
+            ],
+        }
+        if section:
+            search_kwargs["filter"] = f"section eq '{_escape_odata_string(section.strip())}'"
+
+        results = client.search(query, **search_kwargs)
+        hits = [_sanitize_search_hit(dict(hit)) for hit in results]
+        answers = [_make_jsonable(answer) for answer in results.get_answers() or []]
+
+        return {
+            "@odata.context": f"{endpoint}/indexes('{table_index_name}')/$metadata#docs(*)",
+            "@odata.count": results.get_count(),
+            "@search.answers": answers,
+            "@search.nextPageParameters": {
+                "search": query,
+                "count": True,
+                "queryType": "semantic",
+                "captions": "extractive",
+                "answers": f"extractive|count-{min(top, 5)}",
+                "filter": search_kwargs.get("filter"),
+            },
+            "value": hits,
+        }
+
+    try:
+        return await asyncio.to_thread(_run)
+    except HttpResponseError as exc:
+        logger.exception("Table row search request failed for query '%s'", query)
+        raise RuntimeError(f"Table row search request failed: {str(exc)}") from exc
+
+
 @mcp.tool(output_schema=None)
 async def get_image_from_content_path(
     content_path: str,
@@ -669,6 +894,7 @@ async def get_image_from_content_path(
     """
 
     normalized_path = (content_path or "").strip()
+    _log_query("get_image_from_content_path", normalized_path)
     if not normalized_path:
         raise ValueError("content_path is required and cannot be empty")
     if not _is_likely_image_content_path(normalized_path):
@@ -705,11 +931,17 @@ class McpPathCompatibilityApp:
 
 
 if __name__ == "__main__":
-    app = mcp.http_app(path="/mcp/", transport="streamable-http")
+    log_level = os.getenv("LOG_LEVEL", "INFO").strip().lower()
+    logger.info("Starting MCP server on 0.0.0.0:8000 (log_level=%s)", log_level)
+    app = mcp.http_app(path="/mcp/", transport="streamable-http", stateless_http=True)
     uvicorn.run(
         McpPathCompatibilityApp(app),
         host="0.0.0.0",
         port=8000,
         lifespan="on",
         timeout_graceful_shutdown=0,
+        log_level=log_level,
+        access_log=True,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )

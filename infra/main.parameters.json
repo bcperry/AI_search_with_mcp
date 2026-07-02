@@ -14,6 +14,9 @@
     "searchServiceSku": {
       "value": "${SEARCH_SERVICE_SKU}"
     },
+    "existingSearchServiceName": {
+      "value": "${SEARCH_SERVICE_NAME=}"
+    },
     "storageAccountSku": {
       "value": "${STORAGE_ACCOUNT_SKU}"
     },
@@ -23,8 +26,14 @@
     "openAiEmbeddingsDeploymentCapacity": {
       "value": "${AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT_CAPACITY=200}"
     },
-    "enableSearchConfigDeploymentScripts": {
-      "value": "${ENABLE_SEARCH_CONFIG_DEPLOYMENT_SCRIPTS=false}"
+    "existingOpenAiAccountName": {
+      "value": "${OPENAI_ACCOUNT_NAME=}"
+    },
+    "existingOpenAiEmbeddingsDeploymentName": {
+      "value": "${OPENAI_EMBEDDINGS_DEPLOYMENT_NAME=}"
+    },
+    "documentIntelligenceSkuName": {
+      "value": "${DOCUMENT_INTELLIGENCE_SKU_NAME=S0}"
     },
     "azureAdRequireAuth": {
       "value": "${AZURE_AD_REQUIRE_AUTH}"

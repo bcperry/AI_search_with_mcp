@@ -48,6 +48,9 @@ param titleSourceFieldName string = 'metadata_storage_name'
 @description('Name of the target title field in the index.')
 param titleTargetFieldName string = 'title'
 
+@description('ISO 8601 duration for the Azure AI Search indexer schedule, such as PT2H for every two hours.')
+param scheduleInterval string = 'PT2H'
+
 @description('Value used to force redeployment of the script when changed.')
 param forceUpdateTag string
 
@@ -111,6 +114,10 @@ resource createIndexer 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         value: titleTargetFieldName
       }
       {
+        name: 'SCHEDULE_INTERVAL'
+        value: scheduleInterval
+      }
+      {
         name: 'USER_ASSIGNED_IDENTITY_CLIENT_ID'
         value: userAssignedIdentityClientId
       }
@@ -157,11 +164,12 @@ cat <<EOF >"$PAYLOAD_FILE"
   "dataSourceName": "$DATA_SOURCE_NAME",
   "skillsetName": "$SKILLSET_NAME",
   "targetIndexName": "$TARGET_INDEX_NAME",
+  "disabled": true,
   "parameters": {
     "maxFailedItems": -1,
     "maxFailedItemsPerBatch": -1,
     "configuration": {
-      "dataToExtract": "contentAndMetadata",
+      "dataToExtract": "storageMetadata",
       "parsingMode": "$PARSING_MODE",
       "failOnUnsupportedContentType": false,
       "failOnUnprocessableDocument": false,
@@ -173,7 +181,10 @@ cat <<EOF >"$PAYLOAD_FILE"
       "sourceFieldName": "$TITLE_SOURCE_FIELD_NAME",
       "targetFieldName": "$TITLE_TARGET_FIELD_NAME"
     }
-  ]
+  ],
+  "schedule": {
+    "interval": "$SCHEDULE_INTERVAL"
+  }
 }
 EOF
 
