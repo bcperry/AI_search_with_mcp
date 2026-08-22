@@ -2,6 +2,26 @@
 
 This repo contains a deployable FastMCP server for Azure AI Search. It provisions Azure AI Search, Azure Blob Storage, Azure OpenAI embeddings, and an App Service-hosted MCP endpoint with `azd`, then seeds the search container from the local `docs/` folder and starts the indexer.
 
+## Portfolio summary
+
+- **Ownership:** Sole contributor across application code, identity, infrastructure, deployment automation, and validation.
+- **What it demonstrates:** A production-oriented MCP and RAG pattern rather than a notebook-only retrieval demo.
+- **Security:** Microsoft Entra bearer-token validation, managed identities, and role-based access to Search and Blob Storage.
+- **Validation:** Deployed and tested end to end in Azure Government.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Docs[Source documents] --> Blob[Azure Blob Storage]
+    Blob --> Indexer[AI Search indexer and skillset]
+    AOAI[Azure OpenAI embeddings] --> Indexer
+    Indexer --> Search[Azure AI Search hybrid and vector index]
+    Search --> MCP[FastMCP server on App Service]
+    Entra[Microsoft Entra ID] --> MCP
+    MCP --> Client[Authorized AI client or agent]
+```
+
 ## What It Deploys
 
 - Azure AI Search with a system-assigned managed identity.
